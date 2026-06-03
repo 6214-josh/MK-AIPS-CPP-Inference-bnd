@@ -165,7 +165,10 @@ static std::string response_json(CudaDqnEngine& engine, const std::string& body)
     std::vector<float> q = engine.infer(features);
     int best = static_cast<int>(std::max_element(q.begin(), q.end()) - q.begin());
     float max_q = q[best];
-    float confidence = std::max(0.55f, std::min(0.98f, 0.55f + (max_q / 3.0f)));
+    float raw_confidence = 0.55f + (max_q / 3.0f);
+    float confidence = raw_confidence;
+    if (confidence < 0.55f) confidence = 0.55f;
+    if (confidence > 0.98f) confidence = 0.98f;
 
     std::ostringstream oss;
     oss << "{"
@@ -191,11 +194,27 @@ static void send_http(SOCKET client, int code, const std::string& content_type, 
     oss << "HTTP/1.1 " << code << " " << status << "\r\n"
         << "Content-Type: " << content_type << "; charset=utf-8\r\n"
         << "Access-Control-Allow-Origin: *\r\n"
+        << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+        << "Access-Control-Allow-Headers: Content-Type\r\n"
         << "Content-Length: " << body.size() << "\r\n"
         << "Connection: close\r\n\r\n"
         << body;
+
     std::string resp = oss.str();
-    send(client, resp.c_str(), static_cast<int>(resp.size()), 0);
+    const char* data = resp.c_str();
+    int remaining = static_cast<int>(resp.size());
+
+    while (remaining > 0) {
+        int sent = send(client, data, remaining, 0);
+        if (sent == SOCKET_ERROR || sent == 0) {
+            break;
+        }
+        data += sent;
+        remaining -= sent;
+    }
+
+    // Force the HTTP response to be flushed before closesocket().
+    shutdown(client, SD_SEND);
 }
 
 int main(int argc, char** argv) {
@@ -211,6 +230,9 @@ int main(int argc, char** argv) {
 
         SOCKET server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (server_fd == INVALID_SOCKET) throw std::runtime_error("socket failed");
+
+        BOOL reuse = TRUE;
+        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -228,6 +250,9 @@ int main(int argc, char** argv) {
             SOCKET client = accept(server_fd, nullptr, nullptr);
             if (client == INVALID_SOCKET) continue;
 
+            DWORD timeout_ms = 3000;
+            setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms));
+
             char buffer[16384];
             int received = recv(client, buffer, sizeof(buffer) - 1, 0);
             if (received <= 0) {
@@ -242,8 +267,12 @@ int main(int argc, char** argv) {
             size_t body_pos = request.find("\r\n\r\n");
             std::string body = body_pos == std::string::npos ? "" : request.substr(body_pos + 4);
 
+            std::cout << "HTTP request: " << first_line << std::endl;
+
             try {
-                if (first_line.find("GET /health") == 0) {
+                if (first_line.find("OPTIONS ") == 0) {
+                    send_http(client, 200, "application/json", "{}");
+                } else if (first_line.find("GET /health") == 0) {
                     send_http(client, 200, "application/json", "{\"status\":\"UP\",\"engine\":\"CUDA_DRIVER_API_PTX_SERVICE\"}");
                 } else if (first_line.find("POST /infer") == 0) {
                     send_http(client, 200, "application/json", response_json(engine, body));
