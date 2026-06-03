@@ -8,11 +8,15 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 MODEL_DIR = BASE_DIR / "models"
 
 DQN_PT = MODEL_DIR / "dqn_scheduler_policy.pt"
+DQN_PRUNED_PT = MODEL_DIR / "dqn_scheduler_policy_pruned.pt"
 DQN_INT8_PT = MODEL_DIR / "dqn_scheduler_policy_int8.pt"
 DQN_ONNX = MODEL_DIR / "dqn_scheduler_policy.onnx"
+DQN_PRUNED_ONNX = MODEL_DIR / "dqn_scheduler_policy_pruned.onnx"
 
 LSTM_PT = MODEL_DIR / "lstm_quantity_forecast.pt"
+LSTM_PRUNED_PT = MODEL_DIR / "lstm_quantity_forecast_pruned.pt"
 LSTM_ONNX = MODEL_DIR / "lstm_quantity_forecast.onnx"
+LSTM_PRUNED_ONNX = MODEL_DIR / "lstm_quantity_forecast_pruned.onnx"
 
 REPORT = MODEL_DIR / "model_export_report.json"
 
@@ -59,8 +63,8 @@ def file_info(path):
     }
 
 
-def load_dqn():
-    checkpoint = torch.load(DQN_PT, map_location="cpu")
+def load_dqn(path=DQN_PT):
+    checkpoint = torch.load(path, map_location="cpu")
     model = DqnPolicyModel(
         state_size=int(checkpoint.get("state_size", 12)),
         action_size=int(checkpoint.get("action_size", 5)),
@@ -70,8 +74,8 @@ def load_dqn():
     return model, checkpoint
 
 
-def load_lstm():
-    checkpoint = torch.load(LSTM_PT, map_location="cpu")
+def load_lstm(path=LSTM_PT):
+    checkpoint = torch.load(path, map_location="cpu")
     model = QuantityLstmModel(
         input_size=int(checkpoint.get("input_size", 8)),
         hidden_size=int(checkpoint.get("hidden_size", 32)),
@@ -83,7 +87,7 @@ def load_lstm():
 
 
 def quantize_dqn_dynamic():
-    model, checkpoint = load_dqn()
+    model, checkpoint = load_dqn(DQN_PT)
 
     q_model = quantization.quantize_dynamic(
         model,
@@ -107,14 +111,14 @@ def quantize_dqn_dynamic():
     }
 
 
-def export_dqn_onnx():
-    model, _ = load_dqn()
+def export_dqn_onnx(source_path, output_path):
+    model, _ = load_dqn(source_path)
     dummy_input = torch.randn(1, 12)
 
     torch.onnx.export(
         model,
         dummy_input,
-        DQN_ONNX,
+        output_path,
         input_names=["state"],
         output_names=["q_values"],
         dynamic_axes={
@@ -125,17 +129,17 @@ def export_dqn_onnx():
         dynamo=False,
     )
 
-    return file_info(DQN_ONNX)
+    return file_info(output_path)
 
 
-def export_lstm_onnx():
-    model, _ = load_lstm()
+def export_lstm_onnx(source_path, output_path):
+    model, _ = load_lstm(source_path)
     dummy_input = torch.randn(1, 6, 8)
 
     torch.onnx.export(
         model,
         dummy_input,
-        LSTM_ONNX,
+        output_path,
         input_names=["sequence_features"],
         output_names=["quantity_prediction"],
         dynamic_axes={
@@ -146,7 +150,7 @@ def export_lstm_onnx():
         dynamo=False,
     )
 
-    return file_info(LSTM_ONNX)
+    return file_info(output_path)
 
 
 def main():
@@ -155,10 +159,16 @@ def main():
 
     report = {
         "dqn_dynamic_int8": quantize_dqn_dynamic(),
-        "dqn_onnx": export_dqn_onnx(),
-        "lstm_onnx": export_lstm_onnx(),
+        "dqn_onnx": export_dqn_onnx(DQN_PT, DQN_ONNX),
+        "lstm_onnx": export_lstm_onnx(LSTM_PT, LSTM_ONNX),
         "next_step": "Use ONNX Runtime to test .onnx, then convert ONNX to TensorRT engine.",
     }
+
+    if DQN_PRUNED_PT.exists():
+        report["dqn_pruned_onnx"] = export_dqn_onnx(DQN_PRUNED_PT, DQN_PRUNED_ONNX)
+
+    if LSTM_PRUNED_PT.exists():
+        report["lstm_pruned_onnx"] = export_lstm_onnx(LSTM_PRUNED_PT, LSTM_PRUNED_ONNX)
 
     REPORT.write_text(
         json.dumps(report, ensure_ascii=False, indent=2),
