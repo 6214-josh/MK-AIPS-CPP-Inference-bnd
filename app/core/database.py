@@ -8,7 +8,7 @@ load_dotenv()
 
 DB_CONFIG = {
     "host": os.getenv("AIPS_DB_HOST", "localhost"),
-    "port": int(os.getenv("AIPS_DB_PORT", "25432")),
+    "port": int(os.getenv("AIPS_DB_PORT", "5432")),
     "database": os.getenv("AIPS_DB_NAME", "aips_db"),
     "user": os.getenv("AIPS_DB_USER", "aips"),
     "password": os.getenv("AIPS_DB_PASSWORD", "aips123"),

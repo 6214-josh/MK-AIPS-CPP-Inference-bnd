@@ -204,6 +204,32 @@ def ensure_extra_schema():
         ("created_at", "TIMESTAMP DEFAULT NOW()"),
     ])
 
+    _simple_table("aips_exception_event", "event_id", [
+        ("event_time", "TIMESTAMP DEFAULT NOW()"),
+        ("event_type", "VARCHAR(80)"),
+        ("event_level", "VARCHAR(40)"),
+        ("cnc_machine_id", "VARCHAR(80)"),
+        ("work_order_no", "VARCHAR(80)"),
+        ("material_no", "VARCHAR(80)"),
+        ("event_description", "TEXT"),
+        ("detected_by", "VARCHAR(80)"),
+        ("shortage_qty", "NUMERIC(14,4)"),
+        ("impact_on_schedule_flag", "BOOLEAN DEFAULT FALSE"),
+        ("impact_hours", "NUMERIC(12,4)"),
+        ("created_at", "TIMESTAMP DEFAULT NOW()"),
+    ])
+
+    _simple_table("aips_data_sync_log", "sync_id", [
+        ("sync_time", "TIMESTAMP DEFAULT NOW()"),
+        ("source_system", "VARCHAR(80)"),
+        ("target_table", "VARCHAR(120)"),
+        ("sync_type", "VARCHAR(80)"),
+        ("sync_status", "VARCHAR(40)"),
+        ("record_count", "INTEGER DEFAULT 0"),
+        ("message", "TEXT"),
+        ("created_at", "TIMESTAMP DEFAULT NOW()"),
+    ])
+
     _run("""
         CREATE TABLE IF NOT EXISTS aips_production_prediction (
             prediction_id BIGSERIAL PRIMARY KEY
@@ -661,6 +687,10 @@ def _seed_if_empty():
             VALUES ('WMS', 'OUT', 'requestMaterialReplenishment', '{"material_no":"MAT-S45C"}'::jsonb, '{"result":"OK"}'::jsonb, 'SUCCESS', '補料請求已送出')
         """)
 
+
+    # 25432 新 DB 是空庫時，流程卡頁面的 /run-cards/demo、/headers、
+    # /features/generate、/dqn/suggest 也需要自動建立流程卡相關資料表。
+    ensure_run_card_schema()
 
 def ensure_run_card_schema():
     _simple_table("aips_run_card_header", "run_card_id", [
