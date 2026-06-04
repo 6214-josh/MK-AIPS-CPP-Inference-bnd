@@ -1,0 +1,12 @@
+# RTX 50 系列 / CUDA 12.8 測試用
+# 一般套件請先執行：
+# python -m pip install -r requirements.txt
+#
+# 再用下面指令安裝 CUDA 版 PyTorch：
+# python -m pip install --pre --upgrade --force-reinstall --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+
+--pre
+--index-url https://download.pytorch.org/whl/nightly/cu128
+torch
+torchvision
+torchaudio

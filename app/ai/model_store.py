@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from app.core.paths import get_backend_root, get_model_dir, get_runtime_path_info
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
@@ -12,8 +13,8 @@ except Exception:
     torch = None
     nn = None
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-MODEL_DIR = BASE_DIR / "models"
+BASE_DIR = get_backend_root()
+MODEL_DIR = get_model_dir()
 
 LSTM_MODEL_PATH = MODEL_DIR / "lstm_quantity_forecast.pt"
 DQN_MODEL_PATH = MODEL_DIR / "dqn_scheduler_policy.pt"
@@ -107,6 +108,7 @@ def get_model_status() -> Dict[str, Any]:
     metadata = _read_metadata()
 
     return {
+        **get_runtime_path_info(),
         "model_dir": str(ensure_model_dir()),
         "torch_available": torch is not None,
         "cuda_available": bool(torch.cuda.is_available()) if torch is not None else False,

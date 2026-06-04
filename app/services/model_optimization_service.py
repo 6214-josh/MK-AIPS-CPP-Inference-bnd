@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+from app.core.paths import get_backend_root, get_model_dir, get_tools_dir, get_runtime_path_info
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Dict, Any, List
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-MODEL_DIR = BASE_DIR / "models"
-TOOLS_DIR = BASE_DIR / "tools" / "model_optimization"
+BASE_DIR = get_backend_root()
+MODEL_DIR = get_model_dir()
+TOOLS_DIR = get_tools_dir()
 
 COMMAND_TIMEOUT_SECONDS = 300
 
@@ -241,6 +242,7 @@ def get_production_deployment_concerns() -> Dict[str, Any]:
 def get_optimization_workflow() -> Dict[str, Any]:
     return {
         "title": "模型剪枝、量化、ONNX、TensorRT 流程",
+        "runtime_path_info": get_runtime_path_info(),
         "integrated_flow": get_aips_integrated_flow(),
         "model_files": [
             _file_info("lstm_quantity_forecast.pt"),
