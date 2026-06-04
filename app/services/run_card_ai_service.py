@@ -235,9 +235,20 @@ def generate_dqn_suggestion():
             "confidence": confidence,
         })
 
+    created = len(suggestions)
+
     return {
         "success": True,
+        "created": created,
+        "created_count": created,
+        "feature_created": feature_result.get("created", 0),
+        "auto_created_detail_count": feature_result.get("auto_created_detail_count", 0),
         "feature_result": feature_result,
         "dqn_mode": dqn.last_mode,
-        "suggestions": suggestions
+        "suggestions": suggestions,
+        "message": (
+            f"已處理 AI 特徵，新增 {created} 筆 DQN 建議"
+            f"（本次新增 AI 特徵 {feature_result.get('created', 0)} 筆，"
+            f"自動補單身 {feature_result.get('auto_created_detail_count', 0)} 筆）"
+        )
     }

@@ -56,7 +56,7 @@ def headers():
         SELECT *
         FROM aips_run_card_header
         ORDER BY run_card_id DESC
-        LIMIT 100
+        LIMIT 1000
     """)
 
 @router.get("/headers/{run_card_id}")
@@ -245,7 +245,7 @@ def features():
         SELECT *
         FROM aips_run_card_ai_feature
         ORDER BY feature_id DESC
-        LIMIT 100
+        LIMIT 1000
     """)
 
 @router.post("/features/generate")
@@ -281,8 +281,26 @@ def dqn_actions():
             action_status
         FROM aips_dqn_action_log
         ORDER BY action_id DESC
-        LIMIT 100
+        LIMIT 1000
     """)
+
+
+
+@router.get("/dqn/actions/summary")
+def dqn_actions_summary():
+    ensure_extra_schema()
+    total = fetch_one("SELECT COUNT(*) AS total_count FROM aips_dqn_action_log")
+    latest = fetch_one("""
+        SELECT action_id, action_time, work_order_no, action_name, action_status
+        FROM aips_dqn_action_log
+        ORDER BY action_id DESC
+        LIMIT 1
+    """)
+    return {
+        "total_count": int(total["total_count"]) if total else 0,
+        "latest": latest,
+        "note": "total_count 是資料庫全部 DQN 建議筆數；/dqn/actions 表格最多回傳最近 1000 筆。"
+    }
 
 
 @router.get("/ai/status")
