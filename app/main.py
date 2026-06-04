@@ -18,6 +18,7 @@ from app.api import architecture_api
 from app.api import run_card_api
 from app.api import model_api
 from app.api import model_optimization_api
+from app.api import data_engineering_api
 
 app = FastAPI(title="AIPS / MK-AIPS AI Scheduling API", version="0.1.0")
 
@@ -51,3 +52,4 @@ app.include_router(run_card_api.router, prefix="/api/run-cards", tags=["run-card
 app.include_router(model_api.router, prefix="/api/aips/models", tags=["aips-models"])
 
 app.include_router(model_optimization_api.router, prefix="/api/aips/model-optimization", tags=["aips-model-optimization"])
+app.include_router(data_engineering_api.router, prefix="/api/aips/data-engineering", tags=["aips-data-engineering"])

@@ -36,6 +36,60 @@ def _normalize_user_row(row):
 def _normalize_user_rows(rows):
     return [_normalize_user_row(dict(r)) for r in rows]
 
+
+def ensure_auth_schema():
+    """
+    FIX65：
+    登入 API 不要跑完整 ensure_extra_schema()。
+    完整 schema 會建立大量 Demo / AI / 硬體資料表；若 DB 正在 ALTER/LOCK，
+    登入會被卡住。登入只需要 user/login_log 兩張表與預設帳密。
+    """
+    execute("""
+        CREATE TABLE IF NOT EXISTS aips_user_account (
+            user_id BIGSERIAL PRIMARY KEY
+        )
+    """)
+    for column_name, column_type in [
+        ("username", "VARCHAR(80)"),
+        ("display_name", "VARCHAR(120)"),
+        ("role_name", "VARCHAR(80)"),
+        ("permission_json", "JSONB"),
+        ("enabled_flag", "BOOLEAN DEFAULT TRUE"),
+        ("password_text", "VARCHAR(120) DEFAULT '123456'"),
+        ("last_login_time", "TIMESTAMP"),
+        ("updated_at", "TIMESTAMP"),
+        ("created_at", "TIMESTAMP DEFAULT NOW()"),
+    ]:
+        execute(f"ALTER TABLE aips_user_account ADD COLUMN IF NOT EXISTS {column_name} {column_type}")
+
+    execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_aips_user_account_username ON aips_user_account(username)")
+
+    execute("""
+        CREATE TABLE IF NOT EXISTS aips_login_log (
+            login_id BIGSERIAL PRIMARY KEY
+        )
+    """)
+    for column_name, column_type in [
+        ("login_time", "TIMESTAMP DEFAULT NOW()"),
+        ("username", "VARCHAR(80)"),
+        ("login_status", "VARCHAR(40)"),
+        ("client_ip", "VARCHAR(80)"),
+        ("user_agent", "TEXT"),
+        ("message", "TEXT"),
+        ("created_at", "TIMESTAMP DEFAULT NOW()"),
+    ]:
+        execute(f"ALTER TABLE aips_login_log ADD COLUMN IF NOT EXISTS {column_name} {column_type}")
+
+    execute("""
+        INSERT INTO aips_user_account (username, display_name, role_name, permission_json, enabled_flag, password_text)
+        VALUES
+        ('admin', '系統管理員', 'ADMIN', '{"login":true,"permission":true}'::jsonb, TRUE, '123456'),
+        ('operator01', '現場操作員', 'OPERATOR', '{"scan":true,"pda":true}'::jsonb, TRUE, '123456'),
+        ('planner01', '生管排程人員', 'PLANNER', '{"schedule":true,"approve":true}'::jsonb, TRUE, '123456')
+        ON CONFLICT (username) DO NOTHING
+    """)
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -76,7 +130,7 @@ def _validate_role(role_name: str):
 
 @router.post("/login")
 def login(data: LoginRequest, request: Request):
-    ensure_extra_schema()
+    ensure_auth_schema()
     user = fetch_one(
         """
         SELECT user_id, username, display_name, role_name, permission_json, enabled_flag, password_text
