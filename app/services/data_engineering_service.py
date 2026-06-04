@@ -40,6 +40,150 @@ def _latest_created_at(table: str):
         return None
 
 
+
+
+
+def _sanitize_legacy_non_cnc_rows() -> None:
+    """
+    FIX72：
+    現場目前只有 CNC，沒有磨床，也不要讓 CNC 欄位空白。
+    將舊 demo 遺留的 GRIND / 磨床 / 空白 CNC 轉為 CNC-01~03，避免表格再出現 GRIND-01 或空白。
+    """
+    execute("""
+        UPDATE aips_run_card_detail
+        SET
+            station_name = CASE
+                WHEN station_name = '磨床' THEN 'CNC銑床'
+                WHEN COALESCE(station_name, '') = '' THEN 'CNC加工'
+                ELSE station_name
+            END,
+            station_sub_name = COALESCE(station_sub_name, 'CNC-AUTO'),
+            process_type = 'CNC',
+            cnc_machine_id = CASE
+                WHEN cnc_machine_id IS NULL OR cnc_machine_id = '' OR cnc_machine_id LIKE 'GRIND%%' THEN
+                    CASE MOD(run_card_detail_id, 3)
+                        WHEN 0 THEN 'CNC-01'
+                        WHEN 1 THEN 'CNC-02'
+                        ELSE 'CNC-03'
+                    END
+                ELSE cnc_machine_id
+            END,
+            avg_power_kw = COALESCE(avg_power_kw, 4.8),
+            avg_thd_current = COALESCE(avg_thd_current, 5.8)
+        WHERE COALESCE(process_type, '') <> 'CNC'
+           OR COALESCE(station_name, '') = '磨床'
+           OR COALESCE(cnc_machine_id, '') = ''
+           OR cnc_machine_id LIKE 'GRIND%%'
+    """)
+
+    execute("""
+        UPDATE aips_dqn_action_log
+        SET
+            original_cnc_machine_id = CASE
+                WHEN original_cnc_machine_id IS NULL OR original_cnc_machine_id = '' OR original_cnc_machine_id LIKE 'GRIND%%' THEN 'CNC-01'
+                ELSE original_cnc_machine_id
+            END,
+            suggested_cnc_machine_id = CASE
+                WHEN suggested_cnc_machine_id IS NULL OR suggested_cnc_machine_id = '' OR suggested_cnc_machine_id LIKE 'GRIND%%' THEN
+                    CASE
+                        WHEN original_cnc_machine_id IN ('CNC-02','CNC-03') THEN original_cnc_machine_id
+                        ELSE 'CNC-01'
+                    END
+                ELSE suggested_cnc_machine_id
+            END
+        WHERE COALESCE(original_cnc_machine_id, '') = ''
+           OR COALESCE(suggested_cnc_machine_id, '') = ''
+           OR original_cnc_machine_id LIKE 'GRIND%%'
+           OR suggested_cnc_machine_id LIKE 'GRIND%%'
+    """)
+
+    execute("""
+        UPDATE aips_reward_result
+        SET cnc_machine_id = CASE
+            WHEN cnc_machine_id IS NULL OR cnc_machine_id = '' OR cnc_machine_id LIKE 'GRIND%%' THEN 'CNC-01'
+            ELSE cnc_machine_id
+        END
+        WHERE COALESCE(cnc_machine_id, '') = ''
+           OR cnc_machine_id LIKE 'GRIND%%'
+    """)
+
+
+def _create_demo_run_card_for_flow() -> Dict[str, Any]:
+    """
+    FIX69/FIX70：
+    AIPS 1-10 全流程每次執行都補一張新的 MES 製令流程卡。
+    FIX70 另外回傳 run_card_no / work_order_no，讓前端能直接聚焦「本次執行」資料。
+    """
+    epoch_row = fetch_one("SELECT EXTRACT(EPOCH FROM NOW())::bigint AS epoch_no")
+    epoch_no = str(epoch_row.get("epoch_no") if epoch_row else "")
+    run_card_no = f"MK-FLOW-{epoch_no}"
+    work_order_no = f"WO-FLOW-{epoch_no}"
+
+    run_card_id = execute_returning_id("""
+        INSERT INTO aips_run_card_header (
+            run_card_no, production_batch_no, work_order_no, sales_order_no, customer_name,
+            product_no, material_no, piece_id, serial_no, process_name, process_level, unit,
+            size_length, size_width, planned_qty, completed_qty, good_qty, ng_qty, remaining_qty,
+            due_date, priority_level, run_card_status, source_system, source_file_name, created_by
+        )
+        VALUES (
+            %s,
+            'MK20260111003',
+            %s,
+            'SO-AIPS-FLOW',
+            'UMC',
+            'MK030001',
+            '3D10-260318-11',
+            'A123-456-789',
+            '20260401 ZH-260318',
+            'CNC 加工',
+            '低階',
+            'mm',
+            130, 130, 100, 0, 0, 0, 100,
+            NOW() + INTERVAL '24 hours',
+            8,
+            'OPEN',
+            'AIPS_1_TO_10_FLOW',
+            'AIPS 1-10 全流程自動建立',
+            'admin'
+        )
+        RETURNING run_card_id
+    """, (run_card_no, work_order_no), "run_card_id")
+
+    demo_details = [
+        (1, 'CNC銑床', 'O3391', 'CNC', 'CNC-01', 100, 0, 'G1F-01 / G1H-01 / G1H-02', '機台自動帶入量測值', 45, 0, False, 0, 6.2, 7.5, 0.12, 'PENDING'),
+        (2, 'CNC銑床', 'O3392', 'CNC', 'CNC-02', 100, 0, 'G4F-02 / G4F-03', '機台自動帶入量測值', 55, 15, True, 15, 3.1, 8.1, 0.20, 'PENDING'),
+        (3, 'CNC銑床', 'O3393', 'CNC', 'CNC-03', 100, 0, 'G2F-01 / G2H-01', '機台自動帶入量測值', 50, 5, False, 0, 5.8, 6.9, 0.11, 'PENDING'),
+        (4, 'CNC鑽孔', 'DRILL-01', 'CNC', 'CNC-01', 100, 0, '孔徑 / 孔深 / 位置度', '機台自動帶入量測值', 42, 0, False, 0, 5.5, 6.6, 0.10, 'PENDING'),
+        (5, 'CNC精修', 'FINISH-01', 'CNC', 'CNC-02', 100, 0, '表面粗糙度 / 尺寸公差', '機台自動帶入量測值', 48, 0, False, 0, 4.9, 6.1, 0.09, 'PENDING'),
+        (6, 'CNC檢測', 'QC-CNC-01', 'CNC', 'CNC-03', 100, 0, '首件 / 巡檢 / 完工檢查', 'CNC 量測回傳', 36, 0, False, 0, 4.7, 5.8, 0.08, 'PENDING'),
+        (7, 'CNC清潔', 'CLEAN-CNC-01', 'CNC', 'CNC-01', 100, 0, '切削液 / 治具 / 鐵屑清除', 'CNC 保養點檢', 30, 0, False, 0, 3.8, 5.0, 0.06, 'PENDING'),
+        (8, 'CNC完工入庫', 'WAREHOUSE-CNC', 'CNC', 'CNC-02', 100, 0, 'CNC 完工入庫', '系統自動確認', 25, 0, False, 0, 3.5, 4.8, 0.05, 'PENDING'),
+    ]
+
+    detail_count = 0
+    for d in demo_details:
+        execute_returning_id("""
+            INSERT INTO aips_run_card_detail (
+                run_card_id, sequence_no, station_name, station_sub_name, process_type,
+                cnc_machine_id, planned_qty, completed_qty, control_spec_text, measurement_spec_text,
+                standard_cycle_time_sec, delay_minutes, shortage_flag, shortage_qty,
+                avg_power_kw, avg_thd_current, quality_risk_score, detail_status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING run_card_detail_id
+        """, (run_card_id, *d), "run_card_detail_id")
+        detail_count += 1
+
+    return {
+        "run_card_id": run_card_id,
+        "run_card_no": run_card_no,
+        "work_order_no": work_order_no,
+        "detail_count": detail_count,
+        "message": f"已建立 AIPS 1-10 流程卡 {run_card_no} / {work_order_no}，單身 {detail_count} 筆",
+    }
+
+
 def _insert_engineering_feature(
     *,
     category: str,
@@ -541,6 +685,99 @@ def feedback_summary() -> Dict[str, Any]:
     }
 
 
+
+def _ids(rows: List[Dict[str, Any]], key: str) -> List[int]:
+    values = []
+    for row in rows or []:
+        try:
+            value = row.get(key)
+            if value is not None:
+                values.append(int(value))
+        except Exception:
+            pass
+    return values
+
+
+def _fetch_by_ids(table: str, pk: str, ids: List[int], order_by: str | None = None) -> List[Dict[str, Any]]:
+    if not ids:
+        return []
+    sql = f"""
+        SELECT *
+        FROM {table}
+        WHERE {pk} = ANY(%s)
+        ORDER BY {order_by or pk} DESC
+    """
+    return fetch_all(sql, (ids,))
+
+
+def _fetch_current_run_rows(
+    *,
+    predictions: List[Dict[str, Any]],
+    states: List[Dict[str, Any]],
+    dqn_result: Dict[str, Any],
+    rewards: List[Dict[str, Any]],
+    run_card_demo: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    FIX71：回傳本次執行實際新增的表格資料，讓前端 Step3~10 直接顯示本次 rows。
+    """
+    prediction_ids = _ids(predictions, "prediction_id")
+    state_ids = _ids(states, "state_id")
+    action_ids = _ids(dqn_result.get("suggestions", []), "action_id")
+    reward_ids = _ids(rewards, "reward_id")
+
+    run_card_work_order_no = run_card_demo.get("work_order_no")
+    run_card_id = run_card_demo.get("run_card_id")
+
+    run_card_features = []
+    if run_card_work_order_no:
+        run_card_features = fetch_all(
+            """
+            SELECT *
+            FROM aips_run_card_ai_feature
+            WHERE work_order_no = %s
+            ORDER BY feature_id DESC
+            """,
+            (run_card_work_order_no,),
+        )
+
+    run_card_details = []
+    if run_card_id:
+        run_card_details = fetch_all(
+            """
+            SELECT *
+            FROM aips_run_card_detail
+            WHERE run_card_id = %s
+            ORDER BY run_card_detail_id DESC
+            """,
+            (run_card_id,),
+        )
+
+    current = {
+        "predictions": _fetch_by_ids("aips_production_prediction", "prediction_id", prediction_ids, "prediction_id"),
+        "run_card_features": run_card_features,
+        "states": _fetch_by_ids("aips_scheduling_state", "state_id", state_ids, "state_id"),
+        "actions": _fetch_by_ids("aips_dqn_action_log", "action_id", action_ids, "action_id"),
+        "rewards": _fetch_by_ids("aips_reward_result", "reward_id", reward_ids, "reward_id"),
+        "run_card_details": run_card_details,
+        "prediction_ids": prediction_ids,
+        "state_ids": state_ids,
+        "action_ids": action_ids,
+        "reward_ids": reward_ids,
+        "run_card_work_order_no": run_card_work_order_no,
+        "run_card_id": run_card_id,
+    }
+    current["changed_table_counts"] = {
+        "Step3_LSTM_predictions": len(current["predictions"]),
+        "Step4_ARIMA_run_card_features": len(current["run_card_features"]),
+        "Step6_DQN_states": len(current["states"]),
+        "Step7_8_DQN_actions": len(current["actions"]),
+        "Step9_MES_details": len(current["run_card_details"]),
+        "Step10_rewards": len(current["rewards"]),
+    }
+    return current
+
+
 def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
     """
     一鍵跑 AIPS 1-10：
@@ -549,6 +786,7 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
     → Step8 Action → Step9 MES 執行展示 → Step10 Reward → 回饋 Step1/2
     """
     step1 = seed_step1_hardware_inputs()
+    run_card_demo = _create_demo_run_card_for_flow()
     step2 = run_step2_feature_engineering()
     predictions = run_predictions(reset_before_run=False)
     run_card_features = generate_run_card_ai_features()
@@ -557,10 +795,20 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
     rewards = calculate_rewards(limit=30)
     erp_callback = process_pending_erp_orders(limit=20, callback_source="AIPS_1_TO_10_FULL_FLOW")
     feedback = run_step2_feature_engineering()
+    _sanitize_legacy_non_cnc_rows()
+
+    current_run = _fetch_current_run_rows(
+        predictions=predictions,
+        states=states,
+        dqn_result=dqn,
+        rewards=rewards,
+        run_card_demo=run_card_demo,
+    )
 
     stages = [
         {"step_no": 1, "step_name": "資料輸入層", "created_count": step1.get("raw_meter_created", 0), "message": step1.get("message")},
         {"step_no": 2, "step_name": "資料治理與特徵工程", "created_count": step2.get("created_count", 0), "message": step2.get("message")},
+        {"step_no": 9, "step_name": "MES 流程卡輸入", "created_count": run_card_demo.get("detail_count", 0), "message": run_card_demo.get("message")},
         {"step_no": 3, "step_name": "LSTM 產量預測", "created_count": len(predictions), "message": "已執行 AI 產量預測"},
         {"step_no": 4, "step_name": "ARIMA 時間序列預測", "created_count": run_card_features.get("created", 0), "message": "已執行流程卡 ARIMA / LSTM 特徵"},
         {"step_no": 5, "step_name": "Prediction Fusion", "created_count": step2.get("created_count", 0), "message": "已將資料工程特徵與預測結果供 DQN State 使用"},
@@ -577,6 +825,8 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
         "success": True,
         "message": "AIPS 1-10 全流程已執行完成，且已建立 Step10 回饋 Step1/2 的資料工程循環。",
         "stages": stages,
+        "run_card_demo": run_card_demo,
+        "current_run": current_run,
         "source_summary": source_summary(),
         "downstream_summary": downstream_summary(),
         "feedback_summary": feedback_summary(),
