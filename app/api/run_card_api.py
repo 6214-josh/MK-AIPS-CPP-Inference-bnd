@@ -127,14 +127,14 @@ def create_detail(data: RunCardDetailCreate):
 
 def _create_demo_details_for_header(run_card_id: int):
     demo_details = [
-        (1, 'CNC加工', 'CNC-STEP-01', 'CNC', 'CNC-01', 100, 0, 'CNC 加工步驟 01', 'CNC 機台量測回傳', 45, 0, False, 0, 6.2, 7.5, 0.12, 'PENDING'),
-        (2, 'CNC加工', 'CNC-STEP-02', 'CNC', 'CNC-02', 100, 0, 'CNC 加工步驟 02', 'CNC 機台量測回傳', 55, 15, True, 15, 3.1, 8.1, 0.20, 'PENDING'),
-        (3, 'CNC加工', 'CNC-STEP-03', 'CNC', 'CNC-03', 100, 0, 'CNC 加工步驟 03', 'CNC 機台量測回傳', 50, 5, False, 0, 5.8, 6.9, 0.11, 'PENDING'),
-        (4, 'CNC加工', 'CNC-STEP-04', 'CNC', 'CNC-01', 100, 0, 'CNC 加工步驟 04', 'CNC 機台量測回傳', 42, 0, False, 0, 5.5, 6.6, 0.10, 'PENDING'),
-        (5, 'CNC加工', 'CNC-STEP-05', 'CNC', 'CNC-02', 100, 0, 'CNC 加工步驟 05', 'CNC 機台量測回傳', 48, 0, False, 0, 4.9, 6.1, 0.09, 'PENDING'),
-        (6, 'CNC加工', 'CNC-STEP-06', 'CNC', 'CNC-03', 100, 0, 'CNC 加工步驟 06', 'CNC 機台量測回傳', 36, 0, False, 0, 4.7, 5.8, 0.08, 'PENDING'),
-        (7, 'CNC加工', 'CNC-STEP-07', 'CNC', 'CNC-01', 100, 0, 'CNC 加工步驟 07', 'CNC 機台量測回傳', 30, 0, False, 0, 3.8, 5.0, 0.06, 'PENDING'),
-        (8, 'CNC加工', 'CNC-STEP-08', 'CNC', 'CNC-02', 100, 0, 'CNC 加工步驟 08', 'CNC 機台量測回傳', 25, 0, False, 0, 3.5, 4.8, 0.05, 'PENDING'),
+        (1, 'CNC加工', 'CNC-STEP-01', 'CNC', 'CNC-01', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 45, 0, False, 0, 6.2, 7.5, 0.12, 'PENDING'),
+        (2, 'CNC加工', 'CNC-STEP-02', 'CNC', 'CNC-02', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 55, 15, True, 15, 3.1, 8.1, 0.20, 'PENDING'),
+        (3, 'CNC加工', 'CNC-STEP-03', 'CNC', 'CNC-03', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 50, 5, False, 0, 5.8, 6.9, 0.11, 'PENDING'),
+        (4, 'CNC加工', 'CNC-STEP-04', 'CNC', 'CNC-01', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 42, 0, False, 0, 5.5, 6.6, 0.10, 'PENDING'),
+        (5, 'CNC加工', 'CNC-STEP-05', 'CNC', 'CNC-02', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 48, 0, False, 0, 4.9, 6.1, 0.09, 'PENDING'),
+        (6, 'CNC加工', 'CNC-STEP-06', 'CNC', 'CNC-03', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 36, 0, False, 0, 4.7, 5.8, 0.08, 'PENDING'),
+        (7, 'CNC加工', 'CNC-STEP-07', 'CNC', 'CNC-01', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 30, 0, False, 0, 3.8, 5.0, 0.06, 'PENDING'),
+        (8, 'CNC加工', 'CNC-STEP-08', 'CNC', 'CNC-02', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 25, 0, False, 0, 3.5, 4.8, 0.05, 'PENDING'),
     ]
     created = 0
     for d in demo_details:
@@ -214,14 +214,14 @@ def create_demo_run_card():
     """, (), "run_card_id")
 
     demo_details = [
-        (1, 'CNC加工', 'CNC-STEP-01', 'CNC', 'CNC-01', 100, 0, 'CNC 加工步驟 01', 'CNC 機台量測回傳', 45, 0, False, 0, 6.2, 7.5, 0.12, 'PENDING'),
-        (2, 'CNC加工', 'CNC-STEP-02', 'CNC', 'CNC-02', 100, 0, 'CNC 加工步驟 02', 'CNC 機台量測回傳', 55, 15, True, 15, 3.1, 8.1, 0.20, 'PENDING'),
-        (3, 'CNC加工', 'CNC-STEP-03', 'CNC', 'CNC-03', 100, 0, 'CNC 加工步驟 03', 'CNC 機台量測回傳', 50, 5, False, 0, 5.8, 6.9, 0.11, 'PENDING'),
-        (4, 'CNC加工', 'CNC-STEP-04', 'CNC', 'CNC-01', 100, 0, 'CNC 加工步驟 04', 'CNC 機台量測回傳', 42, 0, False, 0, 5.5, 6.6, 0.10, 'PENDING'),
-        (5, 'CNC加工', 'CNC-STEP-05', 'CNC', 'CNC-02', 100, 0, 'CNC 加工步驟 05', 'CNC 機台量測回傳', 48, 0, False, 0, 4.9, 6.1, 0.09, 'PENDING'),
-        (6, 'CNC加工', 'CNC-STEP-06', 'CNC', 'CNC-03', 100, 0, 'CNC 加工步驟 06', 'CNC 機台量測回傳', 36, 0, False, 0, 4.7, 5.8, 0.08, 'PENDING'),
-        (7, 'CNC加工', 'CNC-STEP-07', 'CNC', 'CNC-01', 100, 0, 'CNC 加工步驟 07', 'CNC 機台量測回傳', 30, 0, False, 0, 3.8, 5.0, 0.06, 'PENDING'),
-        (8, 'CNC加工', 'CNC-STEP-08', 'CNC', 'CNC-02', 100, 0, 'CNC 加工步驟 08', 'CNC 機台量測回傳', 25, 0, False, 0, 3.5, 4.8, 0.05, 'PENDING'),
+        (1, 'CNC加工', 'CNC-STEP-01', 'CNC', 'CNC-01', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 45, 0, False, 0, 6.2, 7.5, 0.12, 'PENDING'),
+        (2, 'CNC加工', 'CNC-STEP-02', 'CNC', 'CNC-02', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 55, 15, True, 15, 3.1, 8.1, 0.20, 'PENDING'),
+        (3, 'CNC加工', 'CNC-STEP-03', 'CNC', 'CNC-03', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 50, 5, False, 0, 5.8, 6.9, 0.11, 'PENDING'),
+        (4, 'CNC加工', 'CNC-STEP-04', 'CNC', 'CNC-01', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 42, 0, False, 0, 5.5, 6.6, 0.10, 'PENDING'),
+        (5, 'CNC加工', 'CNC-STEP-05', 'CNC', 'CNC-02', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 48, 0, False, 0, 4.9, 6.1, 0.09, 'PENDING'),
+        (6, 'CNC加工', 'CNC-STEP-06', 'CNC', 'CNC-03', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 36, 0, False, 0, 4.7, 5.8, 0.08, 'PENDING'),
+        (7, 'CNC加工', 'CNC-STEP-07', 'CNC', 'CNC-01', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 30, 0, False, 0, 3.8, 5.0, 0.06, 'PENDING'),
+        (8, 'CNC加工', 'CNC-STEP-08', 'CNC', 'CNC-02', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 25, 0, False, 0, 3.5, 4.8, 0.05, 'PENDING'),
     ]
 
     for d in demo_details:

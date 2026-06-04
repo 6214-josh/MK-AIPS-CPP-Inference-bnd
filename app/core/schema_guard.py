@@ -621,7 +621,14 @@ def _seed_if_empty():
 
     if _table_empty("cnc_meter_raw_data"):
         execute("""
-            INSERT INTO cnc_meter_raw_data (meter_id, cnc_machine_id, device_ip, mqtt_topic, voltage_r, voltage_s, voltage_t, current_r, current_s, current_t, power_kw, power_kwh, power_factor, frequency_hz, demand_kw, thd_voltage, thd_current, phase_imbalance_rate, raw_payload)
+            INSERT INTO cnc_meter_raw_data (
+                meter_id, cnc_machine_id, device_ip, mqtt_topic,
+                voltage_r, voltage_s, voltage_t,
+                current_r, current_s, current_t,
+                power_kw, power_kwh, power_factor, frequency_hz,
+                demand_kw, thd_voltage, thd_current,
+                phase_imbalance_rate, raw_payload
+            )
             VALUES
             ('METER-CNC-01','CNC-01','192.168.1.200','AIPS/CNC-01/METER',220,221,219,12,13,12,5.8,1001,0.92,60,6.2,2.1,7.2,1.2,'{}'),
             ('METER-CNC-02','CNC-02','192.168.1.201','AIPS/CNC-02/METER',220,220,219,9,9,10,3.2,900,0.90,60,3.6,2.3,8.0,1.5,'{}'),
@@ -630,7 +637,13 @@ def _seed_if_empty():
 
     if _table_empty("work_order_progress_snapshot"):
         execute("""
-            INSERT INTO work_order_progress_snapshot (work_order_no, product_no, product_name, process_code, planned_qty, completed_qty, good_qty, ng_qty, remaining_qty, due_date, priority_level, current_process_status, assigned_cnc_machine_id, estimated_remaining_hours, delay_risk_flag)
+            INSERT INTO work_order_progress_snapshot (
+                work_order_no, product_no, product_name, process_code,
+                planned_qty, completed_qty, good_qty, ng_qty,
+                remaining_qty, due_date, priority_level,
+                current_process_status, assigned_cnc_machine_id,
+                estimated_remaining_hours, delay_risk_flag
+            )
             VALUES
             ('WO-202606-001','P-AXLE-001','軸心零件','CNC-MILLING',100,20,20,0,80,NOW() + INTERVAL '20 hours',8,'PROCESSING','CNC-01',8,false),
             ('WO-202606-002','P-GEAR-002','齒輪零件','CNC-MILLING',120,30,29,1,90,NOW() + INTERVAL '8 hours',9,'PROCESSING','CNC-02',12,true),
@@ -639,7 +652,13 @@ def _seed_if_empty():
 
     if _table_empty("line_side_inventory_snapshot"):
         execute("""
-            INSERT INTO line_side_inventory_snapshot (cnc_machine_id, line_side_location_id, material_no, material_name, lot_no, current_qty, reserved_qty, available_qty, safety_stock_qty, shortage_flag, shortage_qty, replenishment_required_flag, last_scan_time, source_system)
+            INSERT INTO line_side_inventory_snapshot (
+                cnc_machine_id, line_side_location_id,
+                material_no, material_name, lot_no,
+                current_qty, reserved_qty, available_qty,
+                safety_stock_qty, shortage_flag, shortage_qty,
+                replenishment_required_flag, last_scan_time, source_system
+            )
             VALUES
             ('CNC-01','LS-CNC-01','MAT-AL-6061','鋁棒 6061','LOT-A1',80,10,70,30,false,0,false,NOW(),'WMS'),
             ('CNC-02','LS-CNC-02','MAT-S45C','S45C 圓棒','LOT-B1',20,5,15,30,true,15,true,NOW(),'WMS'),
