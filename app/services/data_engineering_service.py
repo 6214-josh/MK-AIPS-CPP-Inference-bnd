@@ -11,6 +11,7 @@ from app.services.state_builder_service import build_states
 from app.services.prediction_service import run_predictions
 from app.services.run_card_ai_service import generate_run_card_ai_features, generate_dqn_suggestion
 from app.services.reward_service import calculate_rewards
+from app.services.erp_simulator_service import receive_erp_order_demo, process_pending_erp_orders
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -130,6 +131,8 @@ def seed_step1_hardware_inputs() -> Dict[str, Any]:
     這些會回饋到 Step2 資料工程。
     """
     ensure_extra_schema()
+
+    erp_received = receive_erp_order_demo(source="AIPS_STEP1_HARDWARE_SOFTWARE_SIMULATOR")
 
     meters = fetch_all("SELECT * FROM aips_sim_cnc_smart_meter ORDER BY cnc_machine_id LIMIT 10")
     if not meters:
@@ -277,12 +280,13 @@ def seed_step1_hardware_inputs() -> Dict[str, Any]:
             )
 
     return {
+        "erp_received": erp_received,
         "raw_meter_created": raw_created,
         "meter_feature_created": meter_feature_created,
         "scan_event_id": scan_event_id,
         "logistics_id": logistics_id,
         "inventory_snapshot_id": inventory_snapshot_id,
-        "message": "Step1 已從模擬硬體/ERP/WMS/MES 產生資料，下一步可進 Step2 資料工程。",
+        "message": f"Step1 已從軟硬體模擬器產生資料，ERP 新製令 {erp_received.get('work_order_no')} 已接收，下一步可進 Step2 資料工程。",
     }
 
 
@@ -551,6 +555,7 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
     states = build_states()
     dqn = generate_dqn_suggestion()
     rewards = calculate_rewards(limit=30)
+    erp_callback = process_pending_erp_orders(limit=20, callback_source="AIPS_1_TO_10_FULL_FLOW")
     feedback = run_step2_feature_engineering()
 
     stages = [
@@ -564,7 +569,8 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
         {"step_no": 8, "step_name": "Action 決策", "created_count": dqn.get("created_count", dqn.get("created", 0)), "message": dqn.get("message", "已產生 DQN Action")},
         {"step_no": 9, "step_name": "MES 執行層", "created_count": _count("aips_run_card_detail"), "message": "以製令流程卡 / 即時事件展示 MES 執行層"},
         {"step_no": 10, "step_name": "Reward 回饋", "created_count": len(rewards), "message": "已計算 Reward 並回饋 Step1/2"},
-        {"step_no": 11, "step_name": "回饋循環", "created_count": feedback.get("created_count", 0), "message": "Step10 Reward → Step1 → Step2 → Step3~10 循環已建立"},
+        {"step_no": 11, "step_name": "ERP 回傳", "created_count": erp_callback.get("processed_count", 0), "message": erp_callback.get("message")},
+        {"step_no": 12, "step_name": "回饋循環", "created_count": feedback.get("created_count", 0), "message": "Step10 Reward → Step1 → Step2 → Step3~10 循環已建立"},
     ]
 
     return {
@@ -574,4 +580,5 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
         "source_summary": source_summary(),
         "downstream_summary": downstream_summary(),
         "feedback_summary": feedback_summary(),
+        "erp_callback": erp_callback,
     }

@@ -19,6 +19,7 @@ from app.api import run_card_api
 from app.api import model_api
 from app.api import model_optimization_api
 from app.api import data_engineering_api
+from app.api import erp_simulator_api
 
 app = FastAPI(title="AIPS / MK-AIPS AI Scheduling API", version="0.1.0")
 
@@ -53,3 +54,4 @@ app.include_router(model_api.router, prefix="/api/aips/models", tags=["aips-mode
 
 app.include_router(model_optimization_api.router, prefix="/api/aips/model-optimization", tags=["aips-model-optimization"])
 app.include_router(data_engineering_api.router, prefix="/api/aips/data-engineering", tags=["aips-data-engineering"])
+app.include_router(erp_simulator_api.router, prefix="/api/erp-simulator", tags=["erp-simulator"])

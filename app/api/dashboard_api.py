@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.core.database import fetch_all
 from app.core.schema_guard import ensure_extra_schema
+from app.services.erp_simulator_service import erp_summary
 
 router = APIRouter()
 
@@ -37,23 +38,28 @@ def _table_columns(table_name: str):
 
 def _work_order_processed_unprocessed():
     """
-    FIX42：
-    FIX40 直接寫 current_process_status / remaining_qty 條件。
-    但使用者現有 DB 可能沒有這兩個欄位，或欄位名稱跟 demo schema 不完全一致，
-    SQL 例外被 _safe_scalar 吃掉後就會變成 0 / 0。
-
-    此函式會先檢查 work_order_progress_snapshot 實際欄位，再動態組 SQL。
-    若找不到可判斷欄位，至少會回傳：
-      processed = 0
-      unprocessed = total
-    避免畫面明明有 ERP 製令單總數，卻顯示已處理 0 / 未處理 0。
+    FIX67：
+    ERP 卡片改用「每張製令最新一筆 snapshot」計算。
+    否則同一張 ERP 製令接收一筆、處理完又新增一筆 callback snapshot，
+    舊算法會把兩筆都算進去，ERP 已處理 / 未處理會對不起來。
     """
     table_name = "work_order_progress_snapshot"
-    total = _safe_count(table_name)
-    if total <= 0:
+    total_rows = _safe_count(table_name)
+    if total_rows <= 0:
         return 0, 0, 0
 
     cols = _table_columns(table_name)
+    if "work_order_no" not in cols:
+        return 0, total_rows, total_rows
+
+    latest_cte = """
+        WITH latest AS (
+            SELECT DISTINCT ON (work_order_no) *
+            FROM work_order_progress_snapshot
+            ORDER BY work_order_no, snapshot_id DESC
+        )
+    """
+
     conditions = []
 
     status_candidates = [
@@ -81,17 +87,15 @@ def _work_order_processed_unprocessed():
             conditions.append(f"COALESCE({col}, 999999) <= 0")
             break
 
-    # 若完全沒有可判斷欄位：全部視為未處理，至少數字不能 0/0。
+    total = _safe_scalar(latest_cte + " SELECT COUNT(*) AS cnt FROM latest")
+    if total <= 0:
+        return 0, 0, 0
+
     if not conditions:
         return 0, total, total
 
     where = " OR ".join(f"({c})" for c in conditions)
-
-    processed = _safe_scalar(f"""
-        SELECT COUNT(*) AS cnt
-        FROM {table_name}
-        WHERE {where}
-    """)
+    processed = _safe_scalar(latest_cte + f" SELECT COUNT(*) AS cnt FROM latest WHERE {where}")
     processed = max(0, min(processed, total))
     unprocessed = max(0, total - processed)
     return processed, unprocessed, total
@@ -114,6 +118,10 @@ def summary():
     result["erp_processed_count"] = processed
     result["erp_unprocessed_count"] = unprocessed
     result["erp_total_count"] = total
+    try:
+        result["erp_simulator"] = erp_summary()
+    except Exception:
+        result["erp_simulator"] = {"total_count": 0, "processed_count": 0, "unprocessed_count": 0}
 
     try:
         result["latest_actions"] = fetch_all(
