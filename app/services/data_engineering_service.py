@@ -12,6 +12,7 @@ from app.services.prediction_service import run_predictions
 from app.services.run_card_ai_service import generate_run_card_ai_features, generate_dqn_suggestion
 from app.services.reward_service import calculate_rewards
 from app.services.erp_simulator_service import receive_erp_order_demo, process_pending_erp_orders
+from app.services.shortage_priority_dqn_service import run_shortage_priority_dqn
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -715,6 +716,7 @@ def _fetch_current_run_rows(
     predictions: List[Dict[str, Any]],
     states: List[Dict[str, Any]],
     dqn_result: Dict[str, Any],
+    shortage_dqn_result: Dict[str, Any],
     rewards: List[Dict[str, Any]],
     run_card_demo: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -758,6 +760,7 @@ def _fetch_current_run_rows(
         "run_card_features": run_card_features,
         "states": _fetch_by_ids("aips_scheduling_state", "state_id", state_ids, "state_id"),
         "actions": _fetch_by_ids("aips_dqn_action_log", "action_id", action_ids, "action_id"),
+        "shortage_decisions": shortage_dqn_result.get("decisions", []) if shortage_dqn_result else [],
         "rewards": _fetch_by_ids("aips_reward_result", "reward_id", reward_ids, "reward_id"),
         "run_card_details": run_card_details,
         "prediction_ids": prediction_ids,
@@ -783,7 +786,7 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
     一鍵跑 AIPS 1-10：
     Step1 硬體資料 → Step2 資料工程 → Step3 LSTM → Step4 ARIMA
     → Step5 Fusion → Step6 DQN State → Step7 Q-Network
-    → Step8 Action → Step9 MES 執行展示 → Step10 Reward → 回饋 Step1/2
+    → Step8 Action → Step9 MES 執行展示 → Step10 Reward → Step11 缺貨優先 DQN → 回饋 Step1/2
     """
     step1 = seed_step1_hardware_inputs()
     run_card_demo = _create_demo_run_card_for_flow()
@@ -792,6 +795,7 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
     run_card_features = generate_run_card_ai_features()
     states = build_states()
     dqn = generate_dqn_suggestion()
+    shortage_dqn = run_shortage_priority_dqn(limit=12, write_action=True)
     rewards = calculate_rewards(limit=30)
     erp_callback = process_pending_erp_orders(limit=20, callback_source="AIPS_1_TO_10_FULL_FLOW")
     feedback = run_step2_feature_engineering()
@@ -801,6 +805,7 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
         predictions=predictions,
         states=states,
         dqn_result=dqn,
+        shortage_dqn_result=shortage_dqn,
         rewards=rewards,
         run_card_demo=run_card_demo,
     )
@@ -815,18 +820,20 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
         {"step_no": 6, "step_name": "DQN State", "created_count": len(states), "message": "已建立 DQN State"},
         {"step_no": 7, "step_name": "DQN Q-Network", "created_count": dqn.get("created_count", dqn.get("created", 0)), "message": "已呼叫 DQN policy 產生 Q value / Action"},
         {"step_no": 8, "step_name": "Action 決策", "created_count": dqn.get("created_count", dqn.get("created", 0)), "message": dqn.get("message", "已產生 DQN Action")},
+        {"step_no": 11, "step_name": "缺貨優先智慧排程 DQN", "created_count": shortage_dqn.get("created_decisions", 0), "message": "Prediction Fusion / DQN State → 缺貨優先 DQN → Action 權重修正 → Reward 回饋循環已接上"},
         {"step_no": 9, "step_name": "MES 執行層", "created_count": _count("aips_run_card_detail"), "message": "以製令流程卡 / 即時事件展示 MES 執行層"},
         {"step_no": 10, "step_name": "Reward 回饋", "created_count": len(rewards), "message": "已計算 Reward 並回饋 Step1/2"},
-        {"step_no": 11, "step_name": "ERP 回傳", "created_count": erp_callback.get("processed_count", 0), "message": erp_callback.get("message")},
-        {"step_no": 12, "step_name": "回饋循環", "created_count": feedback.get("created_count", 0), "message": "Step10 Reward → Step1 → Step2 → Step3~10 循環已建立"},
+        {"step_no": 12, "step_name": "ERP 回傳", "created_count": erp_callback.get("processed_count", 0), "message": erp_callback.get("message")},
+        {"step_no": 13, "step_name": "回饋循環", "created_count": feedback.get("created_count", 0), "message": "Step10 Reward → Step1 → Step2 → Step3~10 循環已建立"},
     ]
 
     return {
         "success": True,
-        "message": "AIPS 1-10 全流程已執行完成，且已建立 Step10 回饋 Step1/2 的資料工程循環。",
+        "message": "AIPS 1-10 全流程已執行完成；缺貨優先 DQN 已接入 Prediction Fusion / DQN State → Action → Reward → 下一輪資料工程循環。",
         "stages": stages,
         "run_card_demo": run_card_demo,
         "current_run": current_run,
+        "shortage_dqn_result": shortage_dqn,
         "source_summary": source_summary(),
         "downstream_summary": downstream_summary(),
         "feedback_summary": feedback_summary(),
