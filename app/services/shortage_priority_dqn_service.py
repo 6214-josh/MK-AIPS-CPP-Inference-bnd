@@ -190,6 +190,55 @@ def _latest_states(limit: int = 12) -> List[Dict[str, Any]]:
     )
 
 
+def _bootstrap_decisions_if_empty(limit: int = 8) -> int:
+    """
+    若缺貨優先表目前沒有資料，則自動用最新 State 建立一批決策，
+    避免前端頁面一打開就看到完全空白。
+    """
+    try:
+        row = fetch_one("SELECT COUNT(*) AS cnt FROM aips_shortage_priority_decision") or {}
+        current = int(row.get("cnt") or 0)
+    except Exception:
+        current = 0
+
+    if current > 0:
+        return current
+
+    # 先確保至少有 state；若仍沒有資料就直接返回 0。
+    _ensure_states_exist(limit)
+    states = _latest_states(limit)
+    if not states:
+        return 0
+
+    for state in states:
+        decision = compute_decision_for_state(state)
+        decision_id = _insert_decision(decision)
+        _insert_action_from_decision(decision, decision_id)
+        execute(
+            """
+            INSERT INTO aips_shortage_priority_experience (
+                state_id, decision_id, action_type, reward_value, next_state_id, experience_json
+            )
+            VALUES (%s, %s, %s, %s, NULL, %s::jsonb)
+            """,
+            (
+                decision.get("state_id"),
+                decision_id,
+                decision.get("selected_action_type"),
+                decision.get("selected_q_value"),
+                json.dumps({
+                    "state_vector": decision.get("state_vector"),
+                    "base_q": decision.get("base_q"),
+                    "adjusted_q": decision.get("adjusted_q"),
+                    "selected_action": decision.get("selected_action_type"),
+                    "reward_design": WEIGHTS,
+                    "auto_bootstrap": True,
+                }, ensure_ascii=False),
+            ),
+        )
+    return len(states)
+
+
 def _stock_context(state: Dict[str, Any]) -> Dict[str, float]:
     product_no = state.get("product_no")
     cnc = state.get("cnc_machine_id")
@@ -605,6 +654,7 @@ def shortage_priority_overlay_for_state(state: Dict[str, Any], inference: Dict[s
 
 def latest_decisions(limit: int = 100) -> List[Dict[str, Any]]:
     ensure_shortage_priority_schema()
+    _bootstrap_decisions_if_empty(min(max(int(limit or 8), 1), 12))
     return fetch_all(
         """
         SELECT *
@@ -618,6 +668,7 @@ def latest_decisions(limit: int = 100) -> List[Dict[str, Any]]:
 
 def summary() -> Dict[str, Any]:
     ensure_shortage_priority_schema()
+    _bootstrap_decisions_if_empty(8)
     row = fetch_one(
         """
         SELECT
