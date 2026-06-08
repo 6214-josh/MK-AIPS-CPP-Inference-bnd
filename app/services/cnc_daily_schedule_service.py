@@ -166,19 +166,32 @@ def assumptions() -> List[Dict[str, Any]]:
 
 
 def _candidate_orders(limit: int = 30) -> List[Dict[str, Any]]:
-    # 優先抓 ERP / MES 目前製令；若沒有，建立 demo 工單。
+    """
+    FIX84：
+    work_order_progress_snapshot 可能同一張製令有多筆歷史快照。
+    日排程不能把同一張製令的歷史快照全部拿來排，否則同一成品代號看起來會超過三個步驟。
+    這裡改成每個 work_order_no + product_no 只取最新一筆。
+    """
     rows = fetch_all(
         """
-        SELECT
-            work_order_no,
-            product_no,
-            COALESCE(product_name, product_no) AS product_name,
-            COALESCE(planned_qty, remaining_qty, 1) AS planned_qty,
-            COALESCE(remaining_qty, planned_qty, 1) AS remaining_qty,
-            COALESCE(priority_level, 5) AS priority_level,
-            due_date
-        FROM work_order_progress_snapshot
-        WHERE COALESCE(remaining_qty, planned_qty, 1) > 0
+        WITH latest_snapshot AS (
+            SELECT DISTINCT ON (work_order_no, product_no)
+                work_order_no,
+                product_no,
+                COALESCE(product_name, product_no) AS product_name,
+                COALESCE(planned_qty, remaining_qty, 1) AS planned_qty,
+                COALESCE(remaining_qty, planned_qty, 1) AS remaining_qty,
+                COALESCE(priority_level, 5) AS priority_level,
+                due_date,
+                snapshot_id
+            FROM work_order_progress_snapshot
+            WHERE COALESCE(remaining_qty, planned_qty, 1) > 0
+              AND work_order_no IS NOT NULL
+              AND product_no IS NOT NULL
+            ORDER BY work_order_no, product_no, snapshot_id DESC
+        )
+        SELECT *
+        FROM latest_snapshot
         ORDER BY COALESCE(priority_level, 5) DESC, due_date ASC NULLS LAST, snapshot_id DESC
         LIMIT %s
         """,
@@ -196,7 +209,6 @@ def _candidate_orders(limit: int = 30) -> List[Dict[str, Any]]:
         {"work_order_no": "WO-SCH-005", "product_no": "MK030004", "product_name": "精密零件 D", "planned_qty": 90, "remaining_qty": 90, "priority_level": 5},
     ]
     return demo
-
 
 def _assumption_map() -> Dict[str, List[Dict[str, Any]]]:
     rows = assumptions()
@@ -224,9 +236,15 @@ def run_daily_schedule(schedule_date: str | None = None, reset: bool = True, ord
     product_previous_end: Dict[Tuple[str, str], int] = {}
     scheduled_rows: List[Dict[str, Any]] = []
     skipped_rows: List[Dict[str, Any]] = []
+    processed_order_products = set()
 
     for order in orders:
         product_no = order.get("product_no")
+        order_product_key = (order.get("work_order_no"), product_no)
+        if order_product_key in processed_order_products:
+            continue
+        processed_order_products.add(order_product_key)
+
         steps = process_map.get(product_no)
 
         # 若產品不在假設表，套用中性最多 3 步 CNC 假設，避免完全無法排。
@@ -312,7 +330,7 @@ def run_daily_schedule(schedule_date: str | None = None, reset: bool = True, ord
         "work_hours": 8,
         "created": len(scheduled_rows),
         "over_capacity": len(skipped_rows),
-        "message": f"已產生 {day} CNC 8 小時日排程：{len(scheduled_rows)} 筆，超載 {len(skipped_rows)} 筆。",
+        "message": f"已產生 {day} CNC 8 小時日排程：{len(scheduled_rows)} 筆，超載 {len(skipped_rows)} 筆；同一製令 + 成品代號最多只排 3 個 CNC 加工步驟。",
         "summary_by_cnc": summary_by_cnc(str(day)),
         "schedule_rows": latest_schedule(str(day), limit=500),
     }
@@ -325,6 +343,7 @@ def latest_schedule(schedule_date: str | None = None, limit: int = 500) -> List[
         """
         SELECT
             schedule_id, schedule_date, work_order_no, product_no, product_name,
+            COUNT(*) OVER (PARTITION BY work_order_no, product_no) AS product_step_count,
             step_no, step_name, cnc_machine_id, sequence_no_on_cnc,
             planned_qty, processing_minutes, setup_minutes, total_minutes,
             start_minute, end_minute,
