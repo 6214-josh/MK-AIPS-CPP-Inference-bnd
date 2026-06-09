@@ -22,6 +22,7 @@ from app.api import data_engineering_api
 from app.api import erp_simulator_api
 from app.api import shortage_priority_dqn_api
 from app.api import cnc_daily_schedule_api
+from app.api import cnc_dashboard_api
 
 app = FastAPI(title="AIPS / MK-AIPS AI Scheduling API", version="0.1.0")
 
@@ -60,3 +61,4 @@ app.include_router(erp_simulator_api.router, prefix="/api/erp-simulator", tags=[
 
 app.include_router(shortage_priority_dqn_api.router, prefix="/api/aips/shortage-priority-dqn", tags=["shortage-priority-dqn"])
 app.include_router(cnc_daily_schedule_api.router, prefix="/api/aips/cnc-daily-schedule", tags=["cnc-daily-schedule"])
+app.include_router(cnc_dashboard_api.router, prefix="/api/aips/cnc-dashboard", tags=["cnc-dashboard"])

@@ -1,11 +1,11 @@
 {
-  "saved_at": "2026-06-03T16:19:40",
+  "saved_at": "2026-06-08T15:24:28",
   "mode": "DEMO_PERSISTED_MODELS",
   "description": "Demo 版已將 LSTM / DQN 以 PyTorch .pt 檔落地保存。",
   "model_dir": "C:\\Users\\solno\\OneDrive\\桌面\\MINKIN\\inference-cpp\\bnd\\models",
-  "torch_version": "2.5.1+cpu",
-  "cuda_available": false,
-  "cuda_device": null,
+  "torch_version": "2.12.0.dev20260408+cu128",
+  "cuda_available": true,
+  "cuda_device": "NVIDIA GeForce RTX 5090 Laptop GPU",
   "files": {
     "lstm_quantity_forecast": "C:\\Users\\solno\\OneDrive\\桌面\\MINKIN\\inference-cpp\\bnd\\models\\lstm_quantity_forecast.pt",
     "dqn_scheduler_policy": "C:\\Users\\solno\\OneDrive\\桌面\\MINKIN\\inference-cpp\\bnd\\models\\dqn_scheduler_policy.pt",
