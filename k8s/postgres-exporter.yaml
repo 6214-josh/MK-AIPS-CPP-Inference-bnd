@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aips-postgres-exporter
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aips-postgres-exporter
+  template:
+    metadata:
+      labels:
+        app: aips-postgres-exporter
+    spec:
+      containers:
+        - name: postgres-exporter
+          image: prometheuscommunity/postgres-exporter:v0.15.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 9187
+          env:
+            - name: DATA_SOURCE_NAME
+              value: "postgresql://aips:aips123@192.168.1.113:15432/aips_db?sslmode=disable"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aips-postgres-exporter
+  namespace: default
+  labels:
+    app: aips-postgres-exporter
+spec:
+  type: ClusterIP
+  selector:
+    app: aips-postgres-exporter
+  ports:
+    - name: metrics
+      port: 9187
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: aips-postgres-monitor
+  namespace: default
+  labels:
+    release: rancher-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: aips-postgres-exporter
+  namespaceSelector:
+    matchNames:
+      - default
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

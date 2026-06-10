@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aips-backend
+  namespace: default
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: aips-backend
+  template:
+    metadata:
+      labels:
+        app: aips-backend
+    spec:
+      imagePullSecrets:
+        - name: harbor-secret
+      containers:
+        - name: backend
+          image: 192.168.1.113:30002/mk-apis/backend:v2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8999
+          env:
+            - name: AIPS_DB_HOST
+              value: "192.168.1.113"
+            - name: AIPS_DB_PORT
+              value: "15432"
+            - name: AIPS_DB_NAME
+              value: "aips_db"
+            - name: AIPS_DB_USER
+              value: "aips"
+            - name: AIPS_DB_PASSWORD
+              value: "aips123"
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 8
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 6
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aips-backend-service
+  namespace: default
+  labels:
+    app: aips-backend
+spec:
+  type: NodePort
+  selector:
+    app: aips-backend
+  ports:
+    - name: http
+      port: 8999
+      targetPort: http
+      nodePort: 30089

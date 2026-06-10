@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
+
 
 from app.core.schema_guard import ensure_extra_schema
 
@@ -33,6 +35,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/api/health", tags=["health"])
+def health_check():
+    return {"status": "ok", "service": "aips-backend"}
+
+
+@app.get("/healthz", tags=["health"])
+def healthz():
+    return {"status": "ok"}
+
+
+# Prometheus metrics endpoint:
+#   /metrics
+# Rancher Monitoring / Prometheus can scrape this endpoint through ServiceMonitor.
+Instrumentator(
+    excluded_handlers=["/metrics"],
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
 
 @app.on_event("startup")
 def startup_event():

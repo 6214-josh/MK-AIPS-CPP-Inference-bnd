@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: aips-backend-monitor
+  namespace: default
+  labels:
+    release: rancher-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: aips-backend
+  namespaceSelector:
+    matchNames:
+      - default
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
