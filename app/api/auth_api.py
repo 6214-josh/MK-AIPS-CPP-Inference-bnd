@@ -7,6 +7,8 @@ from app.core.schema_guard import ensure_extra_schema
 
 router = APIRouter()
 
+_AUTH_SCHEMA_READY = False
+
 DEFAULT_PERMISSIONS = {
     "dashboard": True,
     "hardware": True,
@@ -38,6 +40,9 @@ def _normalize_user_rows(rows):
 
 
 def ensure_auth_schema():
+    global _AUTH_SCHEMA_READY
+    if _AUTH_SCHEMA_READY:
+        return
     """
     FIX65：
     登入 API 不要跑完整 ensure_extra_schema()。
@@ -89,6 +94,8 @@ def ensure_auth_schema():
         ON CONFLICT (username) DO NOTHING
     """)
 
+
+    _AUTH_SCHEMA_READY = True
 
 class LoginRequest(BaseModel):
     username: str

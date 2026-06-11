@@ -1,7 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_fastapi_instrumentator import Instrumentator
 
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+except ModuleNotFoundError:
+    Instrumentator = None
 
 from app.core.schema_guard import ensure_extra_schema
 
@@ -16,6 +19,7 @@ from app.api import dqn_api
 from app.api import dqn_explain_api
 from app.api import prediction_api
 from app.api import reward_api
+from app.api import reward_log_api
 from app.api import architecture_api
 from app.api import run_card_api
 from app.api import model_api
@@ -28,6 +32,9 @@ from app.api import cnc_dashboard_api
 
 app = FastAPI(title="AIPS / MK-AIPS AI Scheduling API", version="0.1.0")
 
+if Instrumentator is not None:
+    Instrumentator().instrument(app).expose(app)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,26 +42,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.get("/api/health", tags=["health"])
-def health_check():
-    return {"status": "ok", "service": "aips-backend"}
-
-
-@app.get("/healthz", tags=["health"])
-def healthz():
-    return {"status": "ok"}
-
-
-# Prometheus metrics endpoint:
-#   /metrics
-# Rancher Monitoring / Prometheus can scrape this endpoint through ServiceMonitor.
-Instrumentator(
-    excluded_handlers=["/metrics"],
-    should_group_status_codes=True,
-    should_ignore_untemplated=True,
-).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
-
 
 @app.on_event("startup")
 def startup_event():
@@ -71,6 +58,7 @@ app.include_router(dqn_api.router, prefix="/api/aips/dqn", tags=["dqn"])
 app.include_router(dqn_explain_api.router, prefix="/api/aips/dqn-explain", tags=["dqn-explain"])
 app.include_router(prediction_api.router, prefix="/api/aips/predictions", tags=["prediction"])
 app.include_router(reward_api.router, prefix="/api/aips/rewards", tags=["reward"])
+app.include_router(reward_log_api.router, prefix="/api/aips/reward-log", tags=["reward-log"])
 app.include_router(architecture_api.router, prefix="/api/architecture", tags=["architecture"])
 
 app.include_router(run_card_api.router, prefix="/api/run-cards", tags=["run-cards"])
