@@ -5,6 +5,7 @@ from app.core.schema_guard import ensure_extra_schema
 from app.services.feature_engineering_service import calculate_meter_features
 
 CARBON_FACTOR = 0.494
+CNC_CODES = [f"CNC-{i:02d}" for i in range(1, 15)]
 
 def _num(value, default=0.0):
     try:
@@ -23,14 +24,89 @@ def _status(power_kw, thd_current):
         return "IDLE"
     return "STOPPED"
 
-def _seed_meter_raw(cnc_machine_id: str):
+def _demo_meter_profile(cnc_machine_id: str):
+    idx = int(str(cnc_machine_id).split('-')[-1]) if '-' in str(cnc_machine_id) else 1
+    # CNC-03 保留為異常示範，其餘 14 台為 RUNNING / IDLE 合理狀態。
+    if cnc_machine_id == "CNC-03":
+        return dict(ip="192.168.1.202", power=12.5, demand=13.2, kwh=1200.8, pf=0.84, thd=18.0, current=25.5, uunbl=2.8, lunbl=12.6)
+    power = round(2.4 + (idx % 6) * 1.15, 2)
+    demand = round(power + 0.5, 2)
+    thd = round(5.8 + (idx % 5) * 0.55, 2)
+    current = round(7.5 + power * 1.7, 2)
+    return dict(
+        ip=f"192.168.1.{199 + idx}",
+        power=power,
+        demand=demand,
+        kwh=880.0 + idx * 36.5,
+        pf=round(0.88 + (idx % 4) * 0.02, 3),
+        thd=thd,
+        current=current,
+        uunbl=round(0.9 + (idx % 4) * 0.28, 2),
+        lunbl=round(2.4 + (idx % 5) * 0.65, 2),
+    )
+
+
+def ensure_14_cnc_meter_seed():
     ensure_extra_schema()
-    rows = {
-        "CNC-01": dict(ip="192.168.1.200", power=5.8, demand=6.3, kwh=1001.2, pf=0.92, thd=7.2, current=12.0, uunbl=1.2, lunbl=3.2),
-        "CNC-02": dict(ip="192.168.1.201", power=3.2, demand=3.7, kwh=900.5, pf=0.90, thd=8.0, current=9.5, uunbl=1.5, lunbl=4.1),
-        "CNC-03": dict(ip="192.168.1.202", power=12.5, demand=13.2, kwh=1200.8, pf=0.84, thd=18.0, current=25.5, uunbl=2.8, lunbl=12.6),
-    }
-    data = rows.get(cnc_machine_id, rows["CNC-01"])
+    for idx, cnc in enumerate(CNC_CODES, start=1):
+        data = _demo_meter_profile(cnc)
+        execute(
+            """
+            INSERT INTO aips_sim_cnc_smart_meter (
+                cnc_machine_id, meter_id, device_ip, protocol_type, modbus_unit_id,
+                mqtt_topic, voltage_v, current_a, power_kw, demand_kw, thd_current,
+                machine_status, online_flag, last_collect_time
+            )
+            VALUES (%s,%s,%s,'MODBUS_TCP',%s,%s,220,%s,%s,%s,%s,%s,TRUE,NOW())
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                cnc, f"METER-{cnc}", data["ip"], 10 + idx, f"AIPS/{cnc}/METER",
+                data["current"], data["power"], data["demand"], data["thd"],
+                _status(data["power"], data["thd"]),
+            ),
+        )
+        execute(
+            """
+            INSERT INTO aips_electric_cnc_link (
+                cnc_machine_id, meter_id, device_ip, protocol_type,
+                modbus_unit_id, connected_flag, last_collect_time
+            )
+            VALUES (%s,%s,%s,'MODBUS_TCP',%s,TRUE,NOW())
+            ON CONFLICT DO NOTHING
+            """,
+            (cnc, f"METER-{cnc}", data["ip"], idx),
+        )
+        execute(
+            """
+            UPDATE aips_sim_cnc_smart_meter
+            SET meter_id=%s, device_ip=%s, protocol_type='MODBUS_TCP', modbus_unit_id=%s,
+                mqtt_topic=%s, current_a=%s, power_kw=%s, demand_kw=%s,
+                thd_current=%s, machine_status=%s, online_flag=TRUE, last_collect_time=NOW()
+            WHERE cnc_machine_id=%s
+            """,
+            (
+                f"METER-{cnc}", data["ip"], 10 + idx, f"AIPS/{cnc}/METER",
+                data["current"], data["power"], data["demand"], data["thd"],
+                _status(data["power"], data["thd"]), cnc,
+            ),
+        )
+        execute(
+            """
+            UPDATE aips_electric_cnc_link
+            SET meter_id=%s, device_ip=%s, protocol_type='MODBUS_TCP', modbus_unit_id=%s,
+                connected_flag=TRUE, last_collect_time=NOW()
+            WHERE cnc_machine_id=%s
+            """,
+            (f"METER-{cnc}", data["ip"], idx, cnc),
+        )
+
+
+def _seed_meter_raw(cnc_machine_id: str):
+    ensure_14_cnc_meter_seed()
+    if cnc_machine_id not in CNC_CODES:
+        cnc_machine_id = "CNC-01"
+    data = _demo_meter_profile(cnc_machine_id)
     payload = {
         "source": "FFA_ELECTRIC_MONITOR_MIGRATION",
         "cncMachineId": cnc_machine_id,
@@ -77,10 +153,18 @@ def _seed_meter_raw(cnc_machine_id: str):
     return meter_data_id
 
 def seed_all_cnc_meter_data():
+    ensure_14_cnc_meter_seed()
     ids = []
-    for cnc in ["CNC-01", "CNC-02", "CNC-03"]:
+    for cnc in CNC_CODES:
         ids.append(_seed_meter_raw(cnc))
-    return {"success": True, "meter_data_ids": ids}
+    return {"success": True, "meter_data_ids": ids, "cnc_count": len(CNC_CODES), "message": "已模擬 14 台 CNC 智慧電表資料"}
+
+def ensure_full_meter_demo_data():
+    ensure_14_cnc_meter_seed()
+    raw_count = fetch_one("SELECT COUNT(DISTINCT cnc_machine_id) AS cnt FROM cnc_meter_raw_data WHERE cnc_machine_id IS NOT NULL")
+    feature_count = fetch_one("SELECT COUNT(DISTINCT cnc_machine_id) AS cnt FROM cnc_meter_feature WHERE cnc_machine_id IS NOT NULL")
+    if int((raw_count or {}).get("cnt") or 0) < len(CNC_CODES) or int((feature_count or {}).get("cnt") or 0) < len(CNC_CODES):
+        seed_all_cnc_meter_data()
 
 def get_alert_settings():
     ensure_extra_schema()
@@ -93,7 +177,7 @@ def get_alert_settings():
     """)
 
 def get_cnc_links():
-    ensure_extra_schema()
+    ensure_14_cnc_meter_seed()
     return fetch_all("""
         SELECT
             l.*,
@@ -116,12 +200,7 @@ def get_cnc_links():
     """)
 
 def get_electric_monitor_data(cnc_machine_id: str | None = None):
-    ensure_extra_schema()
-
-    # 確保 Demo 有資料，避免第一次進畫面空白
-    count = fetch_one("SELECT COUNT(*) AS cnt FROM cnc_meter_raw_data")
-    if not count or int(count["cnt"]) == 0:
-        seed_all_cnc_meter_data()
+    ensure_full_meter_demo_data()
 
     params = ()
     where = ""

@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from app.core.database import fetch_all, execute_returning_id, execute
 from app.core.schema_guard import ensure_extra_schema
 from app.services.feature_engineering_service import calculate_meter_features
+from app.services.electric_meter_service import ensure_14_cnc_meter_seed
 
 router = APIRouter()
 
@@ -112,8 +113,8 @@ def tag_scan_demo():
 
 @router.get("/cnc/meters")
 def cnc_meters():
-    ensure_extra_schema()
-    return fetch_all("SELECT * FROM aips_sim_cnc_smart_meter ORDER BY sim_meter_id DESC LIMIT 100")
+    ensure_14_cnc_meter_seed()
+    return fetch_all("SELECT * FROM aips_sim_cnc_smart_meter ORDER BY cnc_machine_id LIMIT 100")
 
 @router.post("/cnc/meter-demo/{cnc_machine_id}")
 def cnc_meter_demo(cnc_machine_id: str):

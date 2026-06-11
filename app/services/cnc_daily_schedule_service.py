@@ -6,9 +6,26 @@ from typing import Any, Dict, List, Tuple
 from app.core.database import fetch_all, fetch_one, execute, execute_returning_id
 
 
-CNC_CODES = ["CNC-01", "CNC-02", "CNC-03"]
+CNC_CODES = [f"CNC-{i:02d}" for i in range(1, 15)]
 WORK_START = time(8, 0)
 WORK_MINUTES = 8 * 60
+
+DEMO_PROCESS_ROWS = [
+    ("MK030001", "精密零件 A", 1, "CNC粗加工", "CNC-01", 60, 10, "先粗加工，再精修，最後檢測"),
+    ("MK030001", "精密零件 A", 2, "CNC精修", "CNC-02", 75, 8, "承接 Step1"),
+    ("MK030001", "精密零件 A", 3, "CNC尺寸檢測", "CNC-03", 45, 5, "最後 CNC 檢測"),
+    ("MK030002", "精密零件 B", 1, "CNC銑削", "CNC-04", 55, 8, "以 CNC-04 為主"),
+    ("MK030002", "精密零件 B", 2, "CNC鑽孔", "CNC-05", 65, 6, "承接銑削"),
+    ("MK030002", "精密零件 B", 3, "CNC倒角", "CNC-06", 35, 5, "最後倒角"),
+    ("MK030003", "精密零件 C", 1, "CNC粗加工", "CNC-07", 70, 10, "單件先粗加工"),
+    ("MK030003", "精密零件 C", 2, "CNC二次加工", "CNC-08", 50, 6, "二次加工"),
+    ("MK030004", "精密零件 D", 1, "CNC加工", "CNC-09", 90, 12, "單步製程"),
+    ("MK030005", "精密零件 E", 1, "CNC粗加工", "CNC-10", 80, 10, "高優先品項"),
+    ("MK030005", "精密零件 E", 2, "CNC精加工", "CNC-11", 55, 8, "高優先品項"),
+    ("MK030005", "精密零件 E", 3, "CNC完工檢測", "CNC-12", 40, 5, "高優先品項"),
+    ("P-AXLE-001", "軸類零件", 1, "CNC加工 Step1", "CNC-13", 60, 8, "新增 14 CNC 示範"),
+    ("P-AXLE-001", "軸類零件", 2, "CNC加工 Step2", "CNC-14", 50, 6, "新增 14 CNC 示範"),
+]
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -111,23 +128,9 @@ def seed_process_assumptions(reset: bool = False) -> Dict[str, Any]:
     if existing > 0 and not reset:
         return {"created": 0, "existing": existing, "message": "產品 CNC 加工順序假設資料已存在"}
 
-    # 原則：每個產品不超過 3 個加工步驟，最多透過 CNC-01 / CNC-02 / CNC-03。
-    demo_rows = [
-        ("MK030001", "精密零件 A", 1, "CNC粗加工", "CNC-01", 60, 10, "先粗加工，再精修，最後檢測"),
-        ("MK030001", "精密零件 A", 2, "CNC精修", "CNC-02", 75, 8, "承接 Step1"),
-        ("MK030001", "精密零件 A", 3, "CNC尺寸檢測", "CNC-03", 45, 5, "最後 CNC 檢測"),
-        ("MK030002", "精密零件 B", 1, "CNC銑削", "CNC-02", 55, 8, "以 CNC-02 為主"),
-        ("MK030002", "精密零件 B", 2, "CNC鑽孔", "CNC-03", 65, 6, "承接銑削"),
-        ("MK030003", "精密零件 C", 1, "CNC粗加工", "CNC-01", 70, 10, "單件先粗加工"),
-        ("MK030003", "精密零件 C", 2, "CNC二次加工", "CNC-03", 50, 6, "CNC-03 二次加工"),
-        ("MK030004", "精密零件 D", 1, "CNC加工", "CNC-02", 90, 12, "單步製程"),
-        ("MK030005", "精密零件 E", 1, "CNC粗加工", "CNC-01", 80, 10, "高優先品項"),
-        ("MK030005", "精密零件 E", 2, "CNC精加工", "CNC-02", 55, 8, "高優先品項"),
-        ("MK030005", "精密零件 E", 3, "CNC完工檢測", "CNC-03", 40, 5, "高優先品項"),
-    ]
-
+    # 原則：全廠 14 台 CNC；每個產品最多 3 個加工步驟，每個步驟指定其中一台 CNC。
     created = 0
-    for row in demo_rows:
+    for row in DEMO_PROCESS_ROWS:
         execute(
             """
             INSERT INTO aips_product_cnc_process_assumption (
@@ -220,6 +223,49 @@ def _assumption_map() -> Dict[str, List[Dict[str, Any]]]:
     return result
 
 
+def _fallback_steps(product_no: str | None, product_name: str | None = None) -> List[Dict[str, Any]]:
+    base_idx = sum(ord(ch) for ch in str(product_no or "")) % len(CNC_CODES)
+    name = product_name or product_no
+    return [
+        {"product_no": product_no, "product_name": name, "step_no": 1, "step_name": "CNC加工 Step1", "cnc_machine_id": CNC_CODES[base_idx % len(CNC_CODES)], "processing_minutes": 60, "setup_minutes": 8},
+        {"product_no": product_no, "product_name": name, "step_no": 2, "step_name": "CNC加工 Step2", "cnc_machine_id": CNC_CODES[(base_idx + 1) % len(CNC_CODES)], "processing_minutes": 50, "setup_minutes": 6},
+        {"product_no": product_no, "product_name": name, "step_no": 3, "step_name": "CNC加工 Step3", "cnc_machine_id": CNC_CODES[(base_idx + 2) % len(CNC_CODES)], "processing_minutes": 40, "setup_minutes": 5},
+    ]
+
+
+def _augment_orders_for_full_14_coverage(orders: List[Dict[str, Any]], process_map: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    augmented = list(orders)
+    covered = set()
+    for order in augmented:
+        steps = process_map.get(order.get("product_no")) or _fallback_steps(order.get("product_no"), order.get("product_name"))
+        for step in steps[:3]:
+            cnc = step.get("cnc_machine_id")
+            if cnc:
+                covered.add(cnc)
+
+    supplement_index = 1
+    for product_no, steps in process_map.items():
+        step_cncs = {step.get("cnc_machine_id") for step in steps[:3] if step.get("cnc_machine_id")}
+        if not (step_cncs - covered):
+            continue
+        template = steps[0] if steps else {}
+        augmented.append({
+            "work_order_no": f"WO-AUTO-{supplement_index:03d}",
+            "product_no": product_no,
+            "product_name": template.get("product_name") or product_no,
+            "planned_qty": 100,
+            "remaining_qty": 100,
+            "priority_level": max(1, 20 - supplement_index),
+            "source_type": "AUTO_SUPPLEMENT",
+        })
+        covered |= step_cncs
+        supplement_index += 1
+        if len(covered) >= len(CNC_CODES):
+            break
+
+    return augmented
+
+
 def run_daily_schedule(schedule_date: str | None = None, reset: bool = True, order_limit: int = 30) -> Dict[str, Any]:
     ensure_cnc_daily_schedule_schema()
     seed_process_assumptions(reset=False)
@@ -230,6 +276,7 @@ def run_daily_schedule(schedule_date: str | None = None, reset: bool = True, ord
 
     process_map = _assumption_map()
     orders = _candidate_orders(order_limit)
+    orders = _augment_orders_for_full_14_coverage(orders, process_map)
 
     machine_available: Dict[str, int] = {cnc: 0 for cnc in CNC_CODES}
     machine_sequence: Dict[str, int] = {cnc: 0 for cnc in CNC_CODES}
@@ -249,11 +296,7 @@ def run_daily_schedule(schedule_date: str | None = None, reset: bool = True, ord
 
         # 若產品不在假設表，套用中性最多 3 步 CNC 假設，避免完全無法排。
         if not steps:
-            steps = [
-                {"product_no": product_no, "product_name": order.get("product_name") or product_no, "step_no": 1, "step_name": "CNC加工 Step1", "cnc_machine_id": "CNC-01", "processing_minutes": 60, "setup_minutes": 8},
-                {"product_no": product_no, "product_name": order.get("product_name") or product_no, "step_no": 2, "step_name": "CNC加工 Step2", "cnc_machine_id": "CNC-02", "processing_minutes": 50, "setup_minutes": 6},
-                {"product_no": product_no, "product_name": order.get("product_name") or product_no, "step_no": 3, "step_name": "CNC加工 Step3", "cnc_machine_id": "CNC-03", "processing_minutes": 40, "setup_minutes": 5},
-            ]
+            steps = _fallback_steps(product_no, order.get("product_name"))
 
         for step in steps[:3]:
             cnc = step.get("cnc_machine_id") or "CNC-01"
@@ -423,6 +466,10 @@ def schedule_result(schedule_date: str | None = None) -> Dict[str, Any]:
     rows = latest_schedule(str(day), limit=500)
     # 第一次進頁面若沒有資料，先產生今天的排程，避免空白。
     if not rows:
+        return run_daily_schedule(str(day), reset=True, order_limit=30)
+
+    active_cncs = {row.get("cnc_machine_id") for row in rows if row.get("cnc_machine_id")}
+    if len(active_cncs) < len(CNC_CODES):
         return run_daily_schedule(str(day), reset=True, order_limit=30)
 
     return {

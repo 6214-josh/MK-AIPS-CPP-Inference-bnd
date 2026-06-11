@@ -10,6 +10,7 @@ from app.services.electric_meter_service import (
     _seed_meter_raw,
     get_alert_settings,
     get_cnc_links,
+    ensure_full_meter_demo_data,
 )
 
 router = APIRouter()
@@ -53,11 +54,13 @@ def calculate_feature(cnc_machine_id: str):
 @router.get("/raw/latest")
 def latest_raw(limit: int = 100):
     ensure_extra_schema()
+    ensure_full_meter_demo_data()
     return fetch_all("SELECT * FROM cnc_meter_raw_data ORDER BY meter_data_id DESC LIMIT %s", (limit,))
 
 @router.get("/features/latest")
 def latest_features(limit: int = 100):
     ensure_extra_schema()
+    ensure_full_meter_demo_data()
     return fetch_all("SELECT * FROM cnc_meter_feature ORDER BY feature_id DESC LIMIT %s", (limit,))
 
 # FIX23：FFA 智慧電表介面移植 API
