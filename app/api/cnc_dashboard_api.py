@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from app.services.cnc_dashboard_service import cnc_dashboard, simulate_ai_reschedule
+from app.services.cnc_dashboard_service import cnc_dashboard, simulate_ai_reschedule, preview_ai_reschedule
 
 router = APIRouter()
 
@@ -27,3 +27,12 @@ def ai_reschedule(schedule_date: str | None = None):
         return simulate_ai_reschedule(schedule_date=schedule_date)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"AI 一鍵重排模擬失敗：{exc}")
+
+
+@router.api_route("/simulate-reschedule", methods=["GET", "POST"])
+def simulate_reschedule_preview(schedule_date: str | None = None):
+    """重排程模擬運算：只回傳比較結果，不套用 / 不寫入 action log。"""
+    try:
+        return preview_ai_reschedule(schedule_date=schedule_date)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"重排程模擬失敗：{exc}")
