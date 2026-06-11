@@ -27,8 +27,20 @@ def latest(limit: int = 120):
 
 
 @router.get("/dashboard")
-def dashboard(limit: int = 120):
-    return reward_log_dashboard(limit=limit)
+def dashboard(
+    limit: int = 120,
+    time_range: str | None = None,
+    schedule_run_id: str | None = None,
+    reward_scope: str | None = None,
+    action_type: str | None = None,
+):
+    return reward_log_dashboard(
+        limit=limit,
+        time_range=time_range,
+        schedule_run_id=schedule_run_id,
+        reward_scope=reward_scope,
+        action_type=action_type,
+    )
 
 
 @router.post("/ensure-schema")

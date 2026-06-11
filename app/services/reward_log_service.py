@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from app.core.database import execute, fetch_all, fetch_one
@@ -464,9 +464,65 @@ def latest_reward_logs(limit: int = 120) -> List[Dict[str, Any]]:
     )
 
 
-def reward_log_dashboard(limit: int = 120) -> Dict[str, Any]:
+def _filter_logs(
+    logs: List[Dict[str, Any]],
+    time_range: str | None = None,
+    schedule_run_id: str | None = None,
+    reward_scope: str | None = None,
+    action_type: str | None = None,
+) -> List[Dict[str, Any]]:
+    result = list(logs)
+
+    if schedule_run_id and schedule_run_id != "ALL":
+        result = [row for row in result if _safe_text(row.get("schedule_run_id")) == schedule_run_id]
+
+    if reward_scope and reward_scope != "ALL":
+        result = [row for row in result if _safe_text(row.get("reward_scope")) == reward_scope]
+
+    if action_type and action_type != "ALL":
+        result = [row for row in result if _safe_text(row.get("action_code")) == action_type or _safe_text(row.get("action_name")) == action_type]
+
+    if time_range and time_range != "ALL":
+        hours_map = {"6h": 6, "12h": 12, "24h": 24, "7d": 24 * 7}
+        hours = hours_map.get(time_range, 24)
+        parsed = []
+        for row in result:
+            try:
+                parsed.append(datetime.strptime(_safe_text(row.get("calculated_at"))[:19], "%Y-%m-%d %H:%M:%S"))
+            except Exception:
+                pass
+        if parsed:
+            latest = max(parsed)
+            threshold = latest - timedelta(hours=hours)
+            filtered = []
+            for row in result:
+                try:
+                    ts = datetime.strptime(_safe_text(row.get("calculated_at"))[:19], "%Y-%m-%d %H:%M:%S")
+                    if ts >= threshold:
+                        filtered.append(row)
+                except Exception:
+                    filtered.append(row)
+            result = filtered
+
+    return result
+
+
+def reward_log_dashboard(
+    limit: int = 120,
+    time_range: str | None = None,
+    schedule_run_id: str | None = None,
+    reward_scope: str | None = None,
+    action_type: str | None = None,
+) -> Dict[str, Any]:
     try:
         logs = latest_reward_logs(limit)
+        logs = _filter_logs(
+            logs,
+            time_range=time_range,
+            schedule_run_id=schedule_run_id,
+            reward_scope=reward_scope,
+            action_type=action_type,
+        )
     except Exception as exc:
         # 不讓 Dashboard API 回 500，前端仍可顯示錯誤與空資料。
         return {
@@ -541,4 +597,5 @@ def reward_log_dashboard(limit: int = 120) -> Dict[str, Any]:
         "timeline": logs[:8],
         "business_key": "schedule_run_id + decision_step_no + reward_scope + work_order_no + operation_seq + machine_id + action_code",
         "design_note": "Reward Log 以 DQN 排程決策事件為核心，不只用製令單或 CNC 當 Key。",
+        "filters": {"time_range": time_range, "schedule_run_id": schedule_run_id, "reward_scope": reward_scope, "action_type": action_type},
     }
