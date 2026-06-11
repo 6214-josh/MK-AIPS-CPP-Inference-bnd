@@ -1,9 +1,11 @@
 from fastapi import APIRouter
-from app.core.database import fetch_all
+from app.core.database import fetch_all, execute
 from app.core.schema_guard import ensure_extra_schema
 from app.services.erp_simulator_service import erp_summary
 
 router = APIRouter()
+
+DASHBOARD_CNC_CODES = [f"CNC-{i:02d}" for i in range(1, 15)]
 
 @router.get("/health")
 def health():
@@ -100,6 +102,70 @@ def _work_order_processed_unprocessed():
     unprocessed = max(0, total - processed)
     return processed, unprocessed, total
 
+def _ensure_dashboard_actions_14():
+    """
+    總覽儀表板不可只看到 3 台 CNC。
+    若 aips_dqn_action_log 目前缺少 CNC-01 ~ CNC-14 的建議，
+    這裡自動補每台 CNC 的 demo 建議，讓「最新建議」可依 14 台 CNC 篩選。
+    """
+    existing = set()
+    try:
+        rows = fetch_all(
+            """
+            SELECT DISTINCT COALESCE(original_cnc_machine_id, suggested_cnc_machine_id) AS cnc
+            FROM aips_dqn_action_log
+            WHERE COALESCE(original_cnc_machine_id, suggested_cnc_machine_id) IS NOT NULL
+            """
+        )
+        existing = {row["cnc"] for row in rows if row.get("cnc")}
+    except Exception:
+        existing = set()
+
+    action_templates = [
+        ("REQUEST_MATERIAL_REPLENISHMENT", "提前補料", "線邊庫存偏低，建議提前補料避免 CNC 待料。"),
+        ("INCREASE_ORDER_PRIORITY", "提高製令單優先順序", "交期壓力偏高，建議提高優先順序。"),
+        ("REASSIGN_MACHINE", "更換 CNC 機台", "目前負載較高，建議評估改派可用 CNC。"),
+        ("MAINTENANCE_CHECK", "安排預防保養", "電表 THD 或負載波動偏高，建議安排檢查。"),
+        ("KEEP_CURRENT_SCHEDULE", "維持目前排程", "目前缺料與延遲風險可控，建議維持原排程。"),
+    ]
+
+    for index, cnc in enumerate(DASHBOARD_CNC_CODES, start=1):
+        if cnc in existing:
+            continue
+        action_type, action_name, reason = action_templates[(index - 1) % len(action_templates)]
+        target_cnc = DASHBOARD_CNC_CODES[index % len(DASHBOARD_CNC_CODES)]
+        execute(
+            """
+            INSERT INTO aips_dqn_action_log (
+                action_time, action_type, action_name, work_order_no, product_no,
+                original_cnc_machine_id, suggested_cnc_machine_id,
+                expected_delay_reduction_hours, expected_oee_improvement_rate,
+                expected_shortage_risk_reduction, action_confidence_score,
+                action_status, action_reason, created_at
+            )
+            VALUES (
+                NOW(), %s, %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s,
+                'PENDING', %s, NOW()
+            )
+            """,
+            (
+                action_type,
+                action_name,
+                f"WO-DASH-{index:02d}",
+                f"MK030{((index - 1) % 5) + 1:03d}",
+                cnc,
+                target_cnc,
+                round(0.5 + (index % 5) * 0.4, 2),
+                round(0.01 + (index % 8) * 0.01, 3),
+                round(0.08 + (index % 6) * 0.05, 3),
+                round(0.78 + (index % 10) * 0.02, 2),
+                reason,
+            ),
+        )
+
+
 @router.get("/dashboard/summary")
 def summary():
     ensure_extra_schema()
@@ -118,19 +184,22 @@ def summary():
     result["erp_processed_count"] = processed
     result["erp_unprocessed_count"] = unprocessed
     result["erp_total_count"] = total
+    result["cnc_machine_count"] = 14
     try:
         result["erp_simulator"] = erp_summary()
     except Exception:
         result["erp_simulator"] = {"total_count": 0, "processed_count": 0, "unprocessed_count": 0}
 
     try:
+        _ensure_dashboard_actions_14()
         result["latest_actions"] = fetch_all(
             """
-            SELECT action_id, action_time, action_name, work_order_no, original_cnc_machine_id,
+            SELECT action_id, action_time, action_type, action_name, work_order_no, product_no,
+                   original_cnc_machine_id, suggested_cnc_machine_id,
                    expected_oee_improvement_rate, action_confidence_score, action_reason
             FROM aips_dqn_action_log
             ORDER BY action_id DESC
-            LIMIT 10
+            LIMIT 200
             """
         )
     except Exception:

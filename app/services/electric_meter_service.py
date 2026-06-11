@@ -46,8 +46,46 @@ def _demo_meter_profile(cnc_machine_id: str):
     )
 
 
+def _dedupe_meter_seed_tables():
+    """
+    修正舊版 seed 每次 ON CONFLICT DO NOTHING 但沒有唯一鍵，
+    造成 aips_sim_cnc_smart_meter / aips_electric_cnc_link 不斷重複。
+    這裡保留每台 CNC 最新一筆，並建立 cnc_machine_id unique index。
+    """
+    execute(
+        """
+        DELETE FROM aips_sim_cnc_smart_meter t
+        USING (
+            SELECT cnc_machine_id, MAX(sim_meter_id) AS keep_id
+            FROM aips_sim_cnc_smart_meter
+            WHERE cnc_machine_id IS NOT NULL
+            GROUP BY cnc_machine_id
+        ) k
+        WHERE t.cnc_machine_id = k.cnc_machine_id
+          AND t.sim_meter_id <> k.keep_id
+        """
+    )
+    execute(
+        """
+        DELETE FROM aips_electric_cnc_link t
+        USING (
+            SELECT cnc_machine_id, MAX(link_id) AS keep_id
+            FROM aips_electric_cnc_link
+            WHERE cnc_machine_id IS NOT NULL
+            GROUP BY cnc_machine_id
+        ) k
+        WHERE t.cnc_machine_id = k.cnc_machine_id
+          AND t.link_id <> k.keep_id
+        """
+    )
+    execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_sim_cnc_meter_cnc ON aips_sim_cnc_smart_meter(cnc_machine_id)")
+    execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_electric_cnc_link_cnc ON aips_electric_cnc_link(cnc_machine_id)")
+
+
 def ensure_14_cnc_meter_seed():
     ensure_extra_schema()
+    _dedupe_meter_seed_tables()
+
     for idx, cnc in enumerate(CNC_CODES, start=1):
         data = _demo_meter_profile(cnc)
         execute(
@@ -58,7 +96,20 @@ def ensure_14_cnc_meter_seed():
                 machine_status, online_flag, last_collect_time
             )
             VALUES (%s,%s,%s,'MODBUS_TCP',%s,%s,220,%s,%s,%s,%s,%s,TRUE,NOW())
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (cnc_machine_id) DO UPDATE SET
+                meter_id = EXCLUDED.meter_id,
+                device_ip = EXCLUDED.device_ip,
+                protocol_type = EXCLUDED.protocol_type,
+                modbus_unit_id = EXCLUDED.modbus_unit_id,
+                mqtt_topic = EXCLUDED.mqtt_topic,
+                voltage_v = EXCLUDED.voltage_v,
+                current_a = EXCLUDED.current_a,
+                power_kw = EXCLUDED.power_kw,
+                demand_kw = EXCLUDED.demand_kw,
+                thd_current = EXCLUDED.thd_current,
+                machine_status = EXCLUDED.machine_status,
+                online_flag = TRUE,
+                last_collect_time = NOW()
             """,
             (
                 cnc, f"METER-{cnc}", data["ip"], 10 + idx, f"AIPS/{cnc}/METER",
@@ -73,32 +124,15 @@ def ensure_14_cnc_meter_seed():
                 modbus_unit_id, connected_flag, last_collect_time
             )
             VALUES (%s,%s,%s,'MODBUS_TCP',%s,TRUE,NOW())
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (cnc_machine_id) DO UPDATE SET
+                meter_id = EXCLUDED.meter_id,
+                device_ip = EXCLUDED.device_ip,
+                protocol_type = EXCLUDED.protocol_type,
+                modbus_unit_id = EXCLUDED.modbus_unit_id,
+                connected_flag = TRUE,
+                last_collect_time = NOW()
             """,
             (cnc, f"METER-{cnc}", data["ip"], idx),
-        )
-        execute(
-            """
-            UPDATE aips_sim_cnc_smart_meter
-            SET meter_id=%s, device_ip=%s, protocol_type='MODBUS_TCP', modbus_unit_id=%s,
-                mqtt_topic=%s, current_a=%s, power_kw=%s, demand_kw=%s,
-                thd_current=%s, machine_status=%s, online_flag=TRUE, last_collect_time=NOW()
-            WHERE cnc_machine_id=%s
-            """,
-            (
-                f"METER-{cnc}", data["ip"], 10 + idx, f"AIPS/{cnc}/METER",
-                data["current"], data["power"], data["demand"], data["thd"],
-                _status(data["power"], data["thd"]), cnc,
-            ),
-        )
-        execute(
-            """
-            UPDATE aips_electric_cnc_link
-            SET meter_id=%s, device_ip=%s, protocol_type='MODBUS_TCP', modbus_unit_id=%s,
-                connected_flag=TRUE, last_collect_time=NOW()
-            WHERE cnc_machine_id=%s
-            """,
-            (f"METER-{cnc}", data["ip"], idx, cnc),
         )
 
 
@@ -177,8 +211,13 @@ def get_alert_settings():
     """)
 
 def get_cnc_links():
-    ensure_14_cnc_meter_seed()
-    return fetch_all("""
+    """
+    回傳 CNC-01 ~ CNC-14 與智慧電表連線。
+    若舊資料被清空或先前重複 seed 導致資料異常，這裡會先補齊/去重，
+    所以前端不會一下幾萬筆、一下 0 筆。
+    """
+    ensure_full_meter_demo_data()
+    rows = fetch_all("""
         SELECT
             l.*,
             s.machine_status,
@@ -196,8 +235,35 @@ def get_cnc_links():
             ORDER BY f.feature_id DESC
             LIMIT 1
         ) f ON TRUE
+        WHERE l.cnc_machine_id = ANY(%s)
         ORDER BY l.cnc_machine_id
-    """)
+    """, (CNC_CODES,))
+
+    if len(rows) < len(CNC_CODES):
+        # 最後保護：若資料表因外部清除仍少於 14 筆，再 seed 一次後查詢。
+        seed_all_cnc_meter_data()
+        rows = fetch_all("""
+            SELECT
+                l.*,
+                s.machine_status,
+                s.power_kw,
+                s.demand_kw,
+                s.thd_current,
+                f.estimated_machine_status,
+                f.machine_abnormal_power_flag
+            FROM aips_electric_cnc_link l
+            LEFT JOIN aips_sim_cnc_smart_meter s ON s.cnc_machine_id = l.cnc_machine_id
+            LEFT JOIN LATERAL (
+                SELECT *
+                FROM cnc_meter_feature f
+                WHERE f.cnc_machine_id = l.cnc_machine_id
+                ORDER BY f.feature_id DESC
+                LIMIT 1
+            ) f ON TRUE
+            WHERE l.cnc_machine_id = ANY(%s)
+            ORDER BY l.cnc_machine_id
+        """, (CNC_CODES,))
+    return rows
 
 def get_electric_monitor_data(cnc_machine_id: str | None = None):
     ensure_full_meter_demo_data()
