@@ -191,50 +191,35 @@ def score_actions(item: DqnInput):
     }
 
 def demo_items():
-    return [
-        DqnInput(
-            cnc_id="CNC-01",
-            current_step="步驟1：粗加工",
-            next_step="步驟2：精加工",
-            step_ready=True,
-            step_dependency_done=True,
-            due_remaining_hours=5,
-            estimated_process_hours=4,
-            cnc_oee=0.88,
-            shortage_risk=0.08,
-            power_thd_risk=0.10,
-            quality_risk=0.12,
-            setup_change_minutes=15,
-        ),
-        DqnInput(
-            cnc_id="CNC-02",
-            current_step="步驟2：精加工",
-            next_step="步驟3：檢驗",
-            step_ready=False,
-            step_dependency_done=False,
-            due_remaining_hours=8,
-            estimated_process_hours=3,
-            cnc_oee=0.80,
-            shortage_risk=0.15,
-            power_thd_risk=0.12,
-            quality_risk=0.10,
-            setup_change_minutes=20,
-        ),
-        DqnInput(
-            cnc_id="CNC-03",
-            current_step="步驟3：二次加工",
-            next_step="步驟4：入庫",
-            step_ready=True,
-            step_dependency_done=True,
-            due_remaining_hours=2,
-            estimated_process_hours=4,
-            cnc_oee=0.58,
-            shortage_risk=0.70,
-            power_thd_risk=0.62,
-            quality_risk=0.35,
-            setup_change_minutes=45,
-        ),
+    items = []
+    step_names = [
+        ("步驟1：CNC 粗加工", "步驟2：CNC 精加工"),
+        ("步驟2：CNC 精加工", "步驟3：CNC 檢測"),
+        ("步驟3：CNC 檢測", "完工入庫"),
     ]
+    for idx in range(1, 15):
+        step_no = (idx - 1) % 3
+        current_step, next_step = step_names[step_no]
+        dep_done = step_no == 0 or idx % 4 != 0
+        shortage = min(0.92, 0.06 + (idx % 7) * 0.095)
+        power = min(0.88, 0.08 + (idx % 5) * 0.12)
+        quality = min(0.72, 0.07 + (idx % 6) * 0.075)
+        oee = max(0.52, 0.92 - (idx % 8) * 0.045)
+        items.append(DqnInput(
+            cnc_id=f"CNC-{idx:02d}",
+            current_step=current_step,
+            next_step=next_step,
+            step_ready=dep_done,
+            step_dependency_done=dep_done,
+            due_remaining_hours=max(2.0, 18.0 - idx),
+            estimated_process_hours=2.5 + (idx % 4) * 0.75,
+            cnc_oee=oee,
+            shortage_risk=shortage,
+            power_thd_risk=power,
+            quality_risk=quality,
+            setup_change_minutes=10 + (idx % 6) * 8,
+        ))
+    return items
 
 @router.get("/overview")
 def overview():
@@ -253,7 +238,7 @@ def overview():
             "CHANGE_CNC": "35*(1-OEE) + 25*交期壓力 + 20*電力風險 - 20*換線成本 - 20*前置未完成",
             "INCREASE_PRIORITY": "70*交期壓力 + 10*(1-缺料) - 15*前置未完成",
         },
-        "step_rule": "若流程卡步驟是 1→2→3，後一步必須等前一步完成；若三台 CNC 可平行加工，DQN 會比較每台 CNC 的 reward / Q value，再選分數最高 action。",
+        "step_rule": "若流程卡步驟是 1→2→3，後一步必須等前一步完成；14 台 CNC 會依各自 OEE、缺料風險、電表 THD、品質風險與換線成本計算 reward / Q value，再選分數最高 action。",
         "demo_results": results,
     }
 

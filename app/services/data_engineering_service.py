@@ -14,6 +14,8 @@ from app.services.reward_service import calculate_rewards
 from app.services.erp_simulator_service import receive_erp_order_demo, process_pending_erp_orders
 from app.services.shortage_priority_dqn_service import run_shortage_priority_dqn
 
+CNC_CODES = [f"CNC-{i:02d}" for i in range(1, 15)]
+
 
 def _num(value: Any, default: float = 0.0) -> float:
     try:
@@ -48,7 +50,7 @@ def _sanitize_legacy_non_cnc_rows() -> None:
     """
     FIX72：
     現場目前只有 CNC，沒有磨床，也不要讓 CNC 欄位空白。
-    將舊 demo 遺留的 GRIND / 磨床 / 空白 CNC 轉為 CNC-01~03，避免表格再出現 GRIND-01 或空白。
+    將舊 demo 遺留的 GRIND / 磨床 / 空白 CNC 轉為 CNC-01~14，避免表格再出現 GRIND-01 或空白。
     """
     execute("""
         UPDATE aips_run_card_detail
@@ -62,11 +64,7 @@ def _sanitize_legacy_non_cnc_rows() -> None:
             process_type = 'CNC',
             cnc_machine_id = CASE
                 WHEN cnc_machine_id IS NULL OR cnc_machine_id = '' OR cnc_machine_id LIKE 'GRIND%%' THEN
-                    CASE MOD(run_card_detail_id, 3)
-                        WHEN 0 THEN 'CNC-01'
-                        WHEN 1 THEN 'CNC-02'
-                        ELSE 'CNC-03'
-                    END
+                    'CNC-' || LPAD(((MOD(run_card_detail_id, 14) + 1)::text), 2, '0')
                 ELSE cnc_machine_id
             END,
             avg_power_kw = COALESCE(avg_power_kw, 4.8),
@@ -87,7 +85,7 @@ def _sanitize_legacy_non_cnc_rows() -> None:
             suggested_cnc_machine_id = CASE
                 WHEN suggested_cnc_machine_id IS NULL OR suggested_cnc_machine_id = '' OR suggested_cnc_machine_id LIKE 'GRIND%%' THEN
                     CASE
-                        WHEN original_cnc_machine_id IN ('CNC-02','CNC-03') THEN original_cnc_machine_id
+                        WHEN original_cnc_machine_id ~ '^CNC-[0-9]{2}$' THEN original_cnc_machine_id
                         ELSE 'CNC-01'
                     END
                 ELSE suggested_cnc_machine_id
@@ -152,17 +150,22 @@ def _create_demo_run_card_for_flow() -> Dict[str, Any]:
     """, (run_card_no, work_order_no), "run_card_id")
 
     demo_details = [
-        (1, 'CNC加工', 'CNC-STEP-01', 'CNC', 'CNC-01', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 45, 0, False, 0, 6.2, 7.5, 0.12, 'PENDING'),
-        (2, 'CNC加工', 'CNC-STEP-02', 'CNC', 'CNC-02', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 55, 15, True, 15, 3.1, 8.1, 0.20, 'PENDING'),
-        (3, 'CNC加工', 'CNC-STEP-03', 'CNC', 'CNC-03', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 50, 5, False, 0, 5.8, 6.9, 0.11, 'PENDING'),
-        (4, 'CNC加工', 'CNC-STEP-04', 'CNC', 'CNC-01', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 42, 0, False, 0, 5.5, 6.6, 0.10, 'PENDING'),
-        (5, 'CNC加工', 'CNC-STEP-05', 'CNC', 'CNC-02', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 48, 0, False, 0, 4.9, 6.1, 0.09, 'PENDING'),
-        (6, 'CNC加工', 'CNC-STEP-06', 'CNC', 'CNC-03', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 36, 0, False, 0, 4.7, 5.8, 0.08, 'PENDING'),
-        (7, 'CNC加工', 'CNC-STEP-07', 'CNC', 'CNC-01', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 30, 0, False, 0, 3.8, 5.0, 0.06, 'PENDING'),
-        (8, 'CNC加工', 'CNC-STEP-08', 'CNC', 'CNC-02', 100, 0, 'CNC 製程參數檢查', 'CNC 自動量測回傳', 25, 0, False, 0, 3.5, 4.8, 0.05, 'PENDING'),
+        (1, 'CNC加工01' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-01', 'CNC', 'CNC-01', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 36, 0, False, 0, 4.25, 5.28, 0.07, 'PENDING'),
+        (2, 'CNC加工02' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-02', 'CNC', 'CNC-02', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 37, 0, False, 0, 4.5, 5.56, 0.08, 'PENDING'),
+        (3, 'CNC加工03' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-03', 'CNC', 'CNC-03', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 38, 0, False, 0, 4.75, 5.84, 0.09, 'PENDING'),
+        (4, 'CNC加工04' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-04', 'CNC', 'CNC-04', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 39, 10, False, 0, 5.0, 6.12, 0.1, 'PENDING'),
+        (5, 'CNC加工05' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-05', 'CNC', 'CNC-05', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 40, 0, True, 5, 5.25, 6.4, 0.11, 'PENDING'),
+        (6, 'CNC加工06' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-06', 'CNC', 'CNC-06', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 41, 0, False, 0, 5.5, 6.68, 0.12, 'PENDING'),
+        (7, 'CNC加工07' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-07', 'CNC', 'CNC-07', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 42, 0, False, 0, 5.75, 6.96, 0.13, 'PENDING'),
+        (8, 'CNC加工08' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-08', 'CNC', 'CNC-08', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 43, 10, False, 0, 6.0, 7.24, 0.14, 'PENDING'),
+        (9, 'CNC加工09' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-09', 'CNC', 'CNC-09', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 44, 0, False, 0, 6.25, 7.52, 0.15, 'PENDING'),
+        (10, 'CNC加工10' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-10', 'CNC', 'CNC-10', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 45, 0, True, 5, 6.5, 7.8, 0.16, 'PENDING'),
+        (11, 'CNC加工11' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-11', 'CNC', 'CNC-11', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 46, 0, False, 0, 6.75, 8.08, 0.17, 'PENDING'),
+        (12, 'CNC加工12' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-12', 'CNC', 'CNC-12', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 47, 10, False, 0, 7.0, 8.36, 0.18, 'PENDING'),
+        (13, 'CNC加工13' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-13', 'CNC', 'CNC-13', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 48, 0, False, 0, 7.25, 8.64, 0.19, 'PENDING'),
+        (14, 'CNC加工14' if 'CNC加工'.endswith('工序') else 'CNC加工', 'CNC-STEP-14', 'CNC', 'CNC-14', 100, 0, 'CNC 製程參數 / 工序關係檢查', 'CNC 自動量測回傳', 49, 0, False, 0, 7.5, 8.92, 0.2, 'PENDING'),
     ]
 
-    detail_count = 0
     for d in demo_details:
         execute_returning_id("""
             INSERT INTO aips_run_card_detail (
@@ -277,26 +280,27 @@ def seed_step1_hardware_inputs() -> Dict[str, Any]:
     """
     ensure_extra_schema()
 
-    erp_received = receive_erp_order_demo(source="AIPS_STEP1_HARDWARE_SOFTWARE_SIMULATOR")
+    erp_received = receive_erp_order_demo(source="AIPS_STEP1_HARDWARE_SOFTWARE_SIMULATOR", cnc_machine_id="ALL")
 
-    meters = fetch_all("SELECT * FROM aips_sim_cnc_smart_meter ORDER BY cnc_machine_id LIMIT 10")
-    if not meters:
-        for idx in range(1, 4):
-            execute(
-                """
-                INSERT INTO aips_sim_cnc_smart_meter (
-                    cnc_machine_id, meter_id, device_ip, protocol_type, modbus_unit_id, mqtt_topic,
-                    voltage_v, current_a, power_kw, demand_kw, thd_current,
-                    machine_status, online_flag, last_collect_time
-                )
-                VALUES (%s, %s, %s, 'MODBUS_TCP', %s, %s, 220, %s, %s, %s, %s, 'RUNNING', TRUE, NOW())
-                """,
-                (
-                    f"CNC-0{idx}", f"METER-CNC-0{idx}", f"192.168.1.20{idx}", idx,
-                    f"AIPS/CNC/CNC-0{idx}/METER", 10 + idx, 4 + idx, 5 + idx, 3 + idx,
-                ),
+    # FIX105：Step1 必須確實涵蓋 CNC-01 ~ CNC-14，不再只補 3 台。
+    for idx, cnc in enumerate(CNC_CODES, start=1):
+        execute(
+            """
+            INSERT INTO aips_sim_cnc_smart_meter (
+                cnc_machine_id, meter_id, device_ip, protocol_type, modbus_unit_id, mqtt_topic,
+                voltage_v, current_a, power_kw, demand_kw, thd_current,
+                machine_status, online_flag, last_collect_time
             )
-        meters = fetch_all("SELECT * FROM aips_sim_cnc_smart_meter ORDER BY cnc_machine_id LIMIT 10")
+            SELECT %s, %s, %s, 'MODBUS_TCP', %s, %s, 220, %s, %s, %s, %s, %s, TRUE, NOW()
+            WHERE NOT EXISTS (SELECT 1 FROM aips_sim_cnc_smart_meter WHERE cnc_machine_id = %s)
+            """,
+            (
+                cnc, f"METER-{cnc}", f"192.168.1.{200 + idx}", idx,
+                f"AIPS/CNC/{cnc}/METER", 10 + idx, 4 + idx * 0.35, 5 + idx * 0.30, 3 + (idx % 5),
+                'ALARM' if idx == 3 else ('IDLE' if idx % 4 == 0 else 'RUNNING'), cnc,
+            ),
+        )
+    meters = fetch_all("SELECT * FROM aips_sim_cnc_smart_meter WHERE cnc_machine_id = ANY(%s) ORDER BY cnc_machine_id", (CNC_CODES,))
 
     raw_created = 0
     meter_feature_created = 0
@@ -397,9 +401,51 @@ def seed_step1_hardware_inputs() -> Dict[str, Any]:
         "snapshot_id",
     )
 
+    # FIX105：讓 Step1 / Step2 的 PDA、NFC、物流、WMS 也能抓到 CNC-01 ~ CNC-14。
+    for idx, cnc in enumerate(CNC_CODES, start=1):
+        material_no = f"MAT-CNC-{idx:02d}"
+        execute(
+            """
+            INSERT INTO aips_scan_event (
+                scan_time, scan_type, scan_code, operator_id,
+                work_order_no, material_no, cnc_machine_id,
+                event_status, event_message
+            )
+            VALUES (NOW(), 'PDA_NFC_QRCODE', %s, 'operator01', %s, %s, %s, 'SUCCESS', 'Step1 14 台 CNC 掃描事件')
+            """,
+            (f"QR-{cnc}", f"WO-{cnc}-STEP1", material_no, cnc),
+        )
+        execute(
+            """
+            INSERT INTO aips_sim_line_side_logistics (
+                event_time, cart_code, operator_id, work_order_no, material_no,
+                from_location, to_location, logistics_action, qty, event_status
+            )
+            VALUES (NOW(), %s, 'operator01', %s, %s, '倉庫-A', %s, 'REPLENISH', %s, 'DONE')
+            """,
+            (f"CART-{cnc}", f"WO-{cnc}-STEP1", material_no, f"LS-{cnc}", 20 + idx),
+        )
+        available_qty = 30 + idx * 2
+        safety_qty = 30
+        shortage_qty = max(safety_qty - available_qty, 0)
+        execute(
+            """
+            INSERT INTO line_side_inventory_snapshot (
+                snapshot_time, cnc_machine_id, line_side_location_id,
+                material_no, material_name, lot_no,
+                current_qty, reserved_qty, available_qty, safety_stock_qty,
+                shortage_flag, shortage_qty, replenishment_required_flag,
+                last_scan_time, source_system
+            )
+            VALUES (NOW(), %s, %s, %s, %s, %s, %s, 5, %s, %s, %s, %s, %s, NOW(), 'AIPS_STEP1_14CNC')
+            """,
+            (cnc, f"LS-{cnc}", material_no, f"{cnc} 線邊料件", f"LOT-{idx:02d}", available_qty + 5,
+             available_qty, safety_qty, shortage_qty > 0, shortage_qty, shortage_qty > 0),
+        )
+
     # 若 ERP 製令不足，補 demo 製令，確保 Step3~10 可跑。
-    if _count("work_order_progress_snapshot") < 5:
-        for idx in range(1, 6):
+    if _count("work_order_progress_snapshot") < 14:
+        for idx in range(1, 15):
             execute(
                 """
                 INSERT INTO work_order_progress_snapshot (
@@ -418,9 +464,9 @@ def seed_step1_hardware_inputs() -> Dict[str, Any]:
                 )
                 """,
                 (
-                    f"WO-202606-00{idx}", f"SO-202606-00{idx}",
+                    f"WO-202606-{idx:03d}", f"SO-202606-{idx:03d}",
                     100 + idx * 10, idx * 5, idx * 5, 100 + idx * 10 - idx * 5,
-                    24 + idx * 4, 5 + idx, f"CNC-0{((idx - 1) % 3) + 1}", 4 + idx,
+                    24 + idx * 4, 5 + idx, f"CNC-{idx:02d}", 4 + idx,
                 ),
             )
 
@@ -795,7 +841,7 @@ def run_full_aips_1_to_10_flow() -> Dict[str, Any]:
     run_card_features = generate_run_card_ai_features()
     states = build_states()
     dqn = generate_dqn_suggestion()
-    shortage_dqn = run_shortage_priority_dqn(limit=12, write_action=True)
+    shortage_dqn = run_shortage_priority_dqn(limit=14, write_action=True)
     rewards = calculate_rewards(limit=30)
     erp_callback = process_pending_erp_orders(limit=20, callback_source="AIPS_1_TO_10_FULL_FLOW")
     feedback = run_step2_feature_engineering()

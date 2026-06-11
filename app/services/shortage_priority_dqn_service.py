@@ -511,7 +511,7 @@ def _insert_action_from_decision(decision: Dict[str, Any], decision_id: int) -> 
     cnc = decision.get("cnc_machine_id")
     suggested = cnc
     if action_type == "REASSIGN_MACHINE":
-        suggested = "CNC-02" if cnc != "CNC-02" else "CNC-03"
+        suggested = f"CNC-{((int(str(cnc)[-2:]) % 14) + 1):02d}" if str(cnc).startswith("CNC-") else "CNC-01"
 
     action_id = execute_returning_id(
         """
@@ -567,7 +567,7 @@ def _insert_action_from_decision(decision: Dict[str, Any], decision_id: int) -> 
 def run_shortage_priority_dqn(limit: int = 12, write_action: bool = True) -> Dict[str, Any]:
     ensure_shortage_priority_schema()
 
-    safe_limit = max(1, min(int(limit or 12), 12))
+    safe_limit = max(1, min(int(limit or 14), 14))
     state_count_before = _ensure_states_exist(safe_limit)
     states = _latest_states(safe_limit)
     decisions = []
@@ -652,23 +652,23 @@ def shortage_priority_overlay_for_state(state: Dict[str, Any], inference: Dict[s
     }
 
 
-def latest_decisions(limit: int = 100) -> List[Dict[str, Any]]:
+def latest_decisions(limit: int = 100, cnc_machine_id: str | None = None) -> List[Dict[str, Any]]:
     ensure_shortage_priority_schema()
-    _bootstrap_decisions_if_empty(min(max(int(limit or 8), 1), 12))
+    _bootstrap_decisions_if_empty(min(max(int(limit or 14), 1), 14))
     return fetch_all(
         """
         SELECT *
         FROM aips_shortage_priority_decision
+        WHERE (%s IS NULL OR %s = 'ALL' OR cnc_machine_id = %s)
         ORDER BY decision_id DESC
         LIMIT %s
         """,
-        (limit,),
+        (cnc_machine_id, cnc_machine_id, cnc_machine_id, limit),
     )
 
-
-def summary() -> Dict[str, Any]:
+def summary(cnc_machine_id: str | None = None) -> Dict[str, Any]:
     ensure_shortage_priority_schema()
-    _bootstrap_decisions_if_empty(8)
+    _bootstrap_decisions_if_empty(14)
     row = fetch_one(
         """
         SELECT
@@ -677,26 +677,33 @@ def summary() -> Dict[str, Any]:
             COALESCE(MAX(customer_shortage_risk_score), 0) AS max_shortage_risk,
             COALESCE(SUM(CASE WHEN customer_shortage_risk_score >= 0.7 THEN 1 ELSE 0 END), 0) AS high_risk_count
         FROM aips_shortage_priority_decision
-        """
+        WHERE (%s IS NULL OR %s = 'ALL' OR cnc_machine_id = %s)
+        """,
+        (cnc_machine_id, cnc_machine_id, cnc_machine_id),
     ) or {}
     latest = fetch_one(
         """
         SELECT selected_action_type, selected_action_name, decision_reason, decision_time
         FROM aips_shortage_priority_decision
+        WHERE (%s IS NULL OR %s = 'ALL' OR cnc_machine_id = %s)
         ORDER BY decision_id DESC
         LIMIT 1
-        """
+        """,
+        (cnc_machine_id, cnc_machine_id, cnc_machine_id),
     )
+    avg = float(row.get("avg_shortage_risk") or 0)
+    max_risk = float(row.get("max_shortage_risk") or 0)
     return {
         "total_count": int(row.get("total_count") or 0),
-        "avg_shortage_risk": float(row.get("avg_shortage_risk") or 0),
-        "max_shortage_risk": float(row.get("max_shortage_risk") or 0),
+        "avg_shortage_risk": avg,
+        "max_shortage_risk": max_risk,
+        "avg_shortage_risk_percent": round(avg * 100, 3),
+        "max_shortage_risk_percent": round(max_risk * 100, 3),
         "high_risk_count": int(row.get("high_risk_count") or 0),
         "latest": latest,
         "weights": WEIGHTS,
         "priority_order": "不缺貨 > 準時交貨 > 線邊庫不中斷 > OEE提升 > 降低能耗",
     }
-
 
 def explain() -> Dict[str, Any]:
     return {

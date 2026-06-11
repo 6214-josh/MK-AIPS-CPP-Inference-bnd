@@ -12,8 +12,19 @@ def generate():
     return {"created": generate_actions()}
 
 @router.get("/actions/latest")
-def latest(limit: int = 100):
-    return fetch_all("SELECT * FROM aips_dqn_action_log ORDER BY action_id DESC LIMIT %s", (limit,))
+def latest(limit: int = 100, cnc_machine_id: str | None = None):
+    return fetch_all(
+        """
+        SELECT *
+        FROM aips_dqn_action_log
+        WHERE (%s IS NULL OR %s = 'ALL'
+               OR original_cnc_machine_id = %s
+               OR suggested_cnc_machine_id = %s)
+        ORDER BY action_id DESC
+        LIMIT %s
+        """,
+        (cnc_machine_id, cnc_machine_id, cnc_machine_id, cnc_machine_id, limit),
+    )
 
 @router.get("/gpu-health")
 def gpu_health():
@@ -25,9 +36,9 @@ def gpu_health():
 # /api/aips/shortage-priority-dqn/* 會出現 404 Not found。
 # 因此前端也支援呼叫 /api/aips/dqn/shortage-priority/*，這裡提供同等 API。
 @router.get("/shortage-priority/summary")
-def shortage_priority_summary_alias():
+def shortage_priority_summary_alias(cnc_machine_id: str | None = None):
     try:
-        return shortage_summary()
+        return shortage_summary(cnc_machine_id=cnc_machine_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"缺貨優先 DQN 統計失敗：{exc}")
 
@@ -38,15 +49,15 @@ def shortage_priority_explain_alias():
 
 
 @router.get("/shortage-priority/decisions/latest")
-def shortage_priority_decisions_latest_alias(limit: int = 100):
+def shortage_priority_decisions_latest_alias(limit: int = 100, cnc_machine_id: str | None = None):
     try:
-        return shortage_latest_decisions(limit=limit)
+        return shortage_latest_decisions(limit=limit, cnc_machine_id=cnc_machine_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"查詢缺貨優先 DQN 決策失敗：{exc}")
 
 
 @router.post("/shortage-priority/run")
-def shortage_priority_run_alias(limit: int = 12, write_action: bool = True):
+def shortage_priority_run_alias(limit: int = 14, write_action: bool = True):
     try:
         return run_shortage_priority_dqn(limit=limit, write_action=write_action)
     except Exception as exc:

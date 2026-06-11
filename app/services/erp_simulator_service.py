@@ -26,7 +26,7 @@ def ensure_erp_simulator_schema():
     execute("CREATE SEQUENCE IF NOT EXISTS aips_erp_simulator_seq START 1")
 
 
-def receive_erp_order_demo(source: str = "ERP_SIMULATOR", auto_process_flag: bool = False):
+def receive_erp_order_demo(source: str = "ERP_SIMULATOR", auto_process_flag: bool = False, cnc_machine_id: str | None = None):
     """
     ERP 模擬器接收新的 ERP 製令資料。
     寫入 work_order_progress_snapshot，狀態為 RECEIVED。
@@ -35,7 +35,7 @@ def receive_erp_order_demo(source: str = "ERP_SIMULATOR", auto_process_flag: boo
 
     idx = random.randint(1, 999)
     work_order_no = _next_erp_work_order_no()
-    cnc = f"CNC-0{random.randint(1, 3)}"
+    cnc = cnc_machine_id if cnc_machine_id and cnc_machine_id != "ALL" else f"CNC-{random.randint(1, 14):02d}"
     planned_qty = random.choice([80, 100, 120, 150])
     priority = random.randint(5, 9)
     estimated_hours = random.randint(4, 12)

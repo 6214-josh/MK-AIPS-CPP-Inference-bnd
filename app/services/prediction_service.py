@@ -88,7 +88,7 @@ def run_predictions(reset_before_run: bool = True):
                 "work_order_no": f"WO-DEMO-{i+1:03d}",
                 "product_no": "MK030001",
                 "process_code": "PROCESS_DEMO",
-                "assigned_cnc_machine_id": f"CNC-0{(i % 3) + 1}",
+                "assigned_cnc_machine_id": f"CNC-{((i % 14) + 1):02d}",
                 "remaining_qty": 80 + i * 10,
                 "planned_qty": 100 + i * 10,
                 "estimated_remaining_hours": 3 + (i % 3),
@@ -101,7 +101,7 @@ def run_predictions(reset_before_run: bool = True):
         cnc = (
             wo.get("assigned_cnc_machine_id")
             or wo.get("cnc_machine_id")
-            or f"CNC-0{random.randint(1,3)}"
+            or f"CNC-{random.randint(1,14):02d}"
         )
 
         inv_rows = fetch_all(
