@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Dict, List
 
 from app.core.database import execute, fetch_all, fetch_one
@@ -38,6 +39,28 @@ def _safe_text(value: Any, default: str = "") -> str:
     if value is None:
         return default
     return str(value)
+
+
+def _json_safe(value: Any) -> Any:
+    """
+    FIX116: psycopg2 會把 NUMERIC 讀成 Decimal；直接 json.dumps 會噴
+    Object of type Decimal is not JSON serializable。
+    Reward Log 的 action_params / state_snapshot / next_state_snapshot 是 JSONB，
+    寫入前必須把 Decimal / datetime / date 都轉成 JSON 可序列化型別。
+    """
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(_json_safe(value), ensure_ascii=False, default=str)
 
 
 def _table_exists(table_name: str) -> bool:
@@ -308,12 +331,12 @@ def _seed_demo_reward_log(limit: int = 36) -> int:
             (
                 run_id, "SCH-DEMO-AIPS", step, (limit - step) * 2,
                 "WORK_ORDER", work_order_no, ((step - 1) % 3) + 1, "MK030001", machine_id,
-                action_code, ACTION_NAME_MAP.get(action_code, action_code), json.dumps({"demo": True, "action_code": action_code}, ensure_ascii=False),
+                action_code, ACTION_NAME_MAP.get(action_code, action_code), _json_dumps({"demo": True, "action_code": action_code}),
                 score, before, score, score - before, max(0.01, min(1.0, score / 100.0 + 0.04)), confidence,
                 delivery, shortage, oee, 8 + (step % 5), energy,
                 quality, 0, shortage, 0,
-                json.dumps({"work_order_no": work_order_no, "machine_id": machine_id, "shortage_risk": shortage / 100}, ensure_ascii=False),
-                json.dumps({"expected_reward_after": score, "action_code": action_code}, ensure_ascii=False),
+                _json_dumps({"work_order_no": work_order_no, "machine_id": machine_id, "shortage_risk": shortage / 100}),
+                _json_dumps({"expected_reward_after": score, "action_code": action_code}),
                 "REWARD_FORMULA_V1", "PYTORCH_DQN_Q_NETWORK",
                 "system", "AUTO_APPLIED", "Demo seed for Reward Log Dashboard"
             ),
@@ -415,11 +438,11 @@ def sync_reward_log_from_reward_result(limit: int = 120) -> Dict[str, Any]:
             (
                 run_id, f"SCH-{datetime.now().strftime('%Y%m%d')}-AIPS", step_no, evaluate_time,
                 _scope(row), work_order_no, None, row.get("product_no"), machine_id,
-                row.get("original_cnc_machine_id"), row.get("suggested_cnc_machine_id"), action_code, action_name, json.dumps(action_params, ensure_ascii=False),
+                row.get("original_cnc_machine_id"), row.get("suggested_cnc_machine_id"), action_code, action_name, _json_dumps(action_params),
                 score, before, score, delta, max(0.01, min(1.0, score / 100.0 + 0.04)), confidence,
                 delivery, shortage, oee, max(0.0, min(12.0, oee * 0.25)), max(0.0, min(10.0, energy * 0.2)),
                 quality, maintenance, shortage, 0.0,
-                penalty, json.dumps(state_snapshot, ensure_ascii=False), json.dumps(next_state_snapshot, ensure_ascii=False), "REWARD_FORMULA_V1",
+                penalty, _json_dumps(state_snapshot), _json_dumps(next_state_snapshot), "REWARD_FORMULA_V1",
                 "PYTORCH_DQN_Q_NETWORK", True, evaluate_time, "system", "AUTO_APPLIED", "由 aips_reward_result 同步產生，符合 Reward Log Word 設計",
                 source_reward_id, row.get("action_id"),
             ),

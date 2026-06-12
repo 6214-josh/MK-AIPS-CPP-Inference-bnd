@@ -44,7 +44,9 @@ def latest(limit: int = 100, cnc_machine_id: str | None = None):
                 ROUND(COALESCE(delay_hours, 0)::numeric * 60, 3) AS delay_minutes,
                 ROUND(GREATEST(COALESCE(energy_kwh, 0), 1)::numeric, 3) AS energy_kwh,
                 shortage_occurred_flag,
-                machine_down_occurred_flag
+                machine_down_occurred_flag,
+                COALESCE(reward_engine, 'PYTHON_REWARD_FALLBACK') AS reward_engine,
+                reward_reason
             FROM aips_reward_result
             WHERE cnc_machine_id IS NOT NULL
               AND TRIM(cnc_machine_id) <> ''

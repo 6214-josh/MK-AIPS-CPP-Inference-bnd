@@ -58,3 +58,37 @@ AIPS_GPU_INFERENCE_TIMEOUT=2
 ```
 
 如果 C++ 服務未啟動，後端會自動降級使用原本 Python 規則邏輯，不會讓前端整個壞掉。
+
+
+## FIX117：DQN Reward CUDA Service
+
+本版 CUDA service 不只提供 DQN Action 推論：
+
+```text
+POST /infer   -> DQN Action / Q Values
+POST /reward  -> Reward components / total_reward_score
+GET  /health  -> 顯示 dqn_endpoint / reward_endpoint
+```
+
+### Reward 測試
+
+```bat
+curl -X POST http://127.0.0.1:9001/reward -H "Content-Type: application/json" -d "{\"planned_processing_time\":2.5,\"actual_processing_time\":2.2,\"delay_hours\":0,\"shortage_occurred_flag\":false,\"machine_down_occurred_flag\":false,\"actual_yield_rate\":0.96,\"actual_oee\":0.82,\"energy_kwh\":12,\"expected_oee_improvement_rate\":0.04}"
+```
+
+預期回傳：
+
+```json
+{
+  "engine": "CUDA_DRIVER_API_PTX_REWARD_SERVICE",
+  "reward_oee_score": 30.7,
+  "reward_delivery_score": 20,
+  "reward_shortage_score": 18,
+  "reward_quality_score": 19.2,
+  "reward_energy_score": 7,
+  "total_reward_score": 94.9
+}
+```
+
+FastAPI `/api/aips/rewards/calculate` 會優先呼叫 `http://127.0.0.1:9001/reward`。
+如果 CUDA service 沒啟動，會自動降級 Python Reward，不會中斷 demo。

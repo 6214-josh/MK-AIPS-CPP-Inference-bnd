@@ -19,29 +19,32 @@ static const char* ACTION_TYPES[] = {
     "REQUEST_MATERIAL_REPLENISHMENT",
     "INCREASE_ORDER_PRIORITY",
     "REASSIGN_MACHINE",
-    "PAUSE_WORK_ORDER",
-    "INSERT_URGENT_WORK_ORDER",
-    "MAINTENANCE_CHECK"
+    "PAUSE_LOW_PRIORITY_ORDER",
+    "MAINTENANCE_CHECK",
+    "OVERTIME_PRODUCTION",
+    "ADJUST_BATCH_SIZE"
 };
 
 static const char* ACTION_NAMES[] = {
     "維持目前排程",
-    "提前補料",
-    "提高製令單優先順序",
-    "更換 CNC 機台",
-    "暫停製令單",
-    "緊急插單",
-    "安排預防保養"
+    "優先補線邊庫",
+    "優先生產高缺貨風險品項",
+    "改派可用 CNC",
+    "暫緩低優先級工單",
+    "安排換刀 / 保養",
+    "啟動加班生產",
+    "調整批量"
 };
 
 static const char* ACTION_REASONS[] = {
-    "CUDA Driver API 推論判斷目前缺料、延遲與設備風險可接受，建議維持目前排程。",
-    "CUDA Driver API 推論判斷線邊庫可用量不足或缺料風險最高，建議提前補料。",
-    "CUDA Driver API 推論判斷交期延遲風險偏高且設備仍可加工，建議提高製令單優先順序。",
-    "CUDA Driver API 推論判斷目前 OEE 偏低，建議更換 CNC 機台或調整加工順序。",
-    "CUDA Driver API 推論判斷品質、電力或機台狀態風險偏高，建議暫停製令單並確認。",
-    "CUDA Driver API 推論判斷交期壓力偏高且資源可用，建議評估緊急插單。",
-    "CUDA Driver API 推論判斷設備、電力或品質特徵異常，建議安排預防保養或機台檢查。"
+    "CUDA 缺貨優先 DQN 判斷目前缺貨與交期風險可控，建議維持目前排程。",
+    "CUDA 缺貨優先 DQN 判斷線邊庫缺料或缺貨風險高，建議優先補線邊庫。",
+    "CUDA 缺貨優先 DQN 判斷客戶缺貨或交期延遲風險高，建議優先生產高缺貨風險品項。",
+    "CUDA 缺貨優先 DQN 判斷目前 CNC OEE 偏低或狀態不佳，建議改派可用 CNC。",
+    "CUDA 缺貨優先 DQN 判斷此工單缺貨風險低，必要時可暫緩讓位給高缺貨風險工單。",
+    "CUDA 缺貨優先 DQN 判斷設備、刀具、品質或電力特徵異常，建議安排換刀 / 保養。",
+    "CUDA 缺貨優先 DQN 判斷缺貨與交期壓力高，建議啟動加班生產。",
+    "CUDA 缺貨優先 DQN 判斷可透過調整批量降低缺貨或線邊庫壓力。"
 };
 
 static std::string cuda_error(CUresult result) {
@@ -117,6 +120,7 @@ public:
         CHECK_CUDA(cuCtxCreate(&context_, 0, device_));
         CHECK_CUDA(cuModuleLoad(&module_, ptx_path.c_str()));
         CHECK_CUDA(cuModuleGetFunction(&kernel_, module_, "dqn_policy_kernel"));
+        CHECK_CUDA(cuModuleGetFunction(&reward_kernel_, module_, "reward_score_kernel"));
     }
 
     ~CudaDqnEngine() {
@@ -125,21 +129,40 @@ public:
     }
 
     std::vector<float> infer(const std::vector<float>& features) {
-        if (features.size() != 7) throw std::runtime_error("features size must be 7");
-        float host_q[7] = {0};
+        if (features.size() != 10) throw std::runtime_error("features size must be 10");
+        float host_q[8] = {0};
         CUdeviceptr dev_features = 0;
         CUdeviceptr dev_q = 0;
         CHECK_CUDA(cuCtxSetCurrent(context_));
-        CHECK_CUDA(cuMemAlloc(&dev_features, sizeof(float) * 7));
-        CHECK_CUDA(cuMemAlloc(&dev_q, sizeof(float) * 7));
-        CHECK_CUDA(cuMemcpyHtoD(dev_features, features.data(), sizeof(float) * 7));
+        CHECK_CUDA(cuMemAlloc(&dev_features, sizeof(float) * 10));
+        CHECK_CUDA(cuMemAlloc(&dev_q, sizeof(float) * 8));
+        CHECK_CUDA(cuMemcpyHtoD(dev_features, features.data(), sizeof(float) * 10));
         void* args[] = { &dev_features, &dev_q };
         CHECK_CUDA(cuLaunchKernel(kernel_, 1, 1, 1, 1, 1, 1, 0, 0, args, nullptr));
         CHECK_CUDA(cuCtxSynchronize());
-        CHECK_CUDA(cuMemcpyDtoH(host_q, dev_q, sizeof(float) * 7));
+        CHECK_CUDA(cuMemcpyDtoH(host_q, dev_q, sizeof(float) * 8));
         cuMemFree(dev_features);
         cuMemFree(dev_q);
-        return std::vector<float>(host_q, host_q + 7);
+        return std::vector<float>(host_q, host_q + 8);
+    }
+
+
+    std::vector<float> reward(const std::vector<float>& features) {
+        if (features.size() != 8) throw std::runtime_error("reward features size must be 8");
+        float host_reward[6] = {0};
+        CUdeviceptr dev_features = 0;
+        CUdeviceptr dev_reward = 0;
+        CHECK_CUDA(cuCtxSetCurrent(context_));
+        CHECK_CUDA(cuMemAlloc(&dev_features, sizeof(float) * 8));
+        CHECK_CUDA(cuMemAlloc(&dev_reward, sizeof(float) * 6));
+        CHECK_CUDA(cuMemcpyHtoD(dev_features, features.data(), sizeof(float) * 8));
+        void* args[] = { &dev_features, &dev_reward };
+        CHECK_CUDA(cuLaunchKernel(reward_kernel_, 1, 1, 1, 1, 1, 1, 0, 0, args, nullptr));
+        CHECK_CUDA(cuCtxSynchronize());
+        CHECK_CUDA(cuMemcpyDtoH(host_reward, dev_reward, sizeof(float) * 6));
+        cuMemFree(dev_features);
+        cuMemFree(dev_reward);
+        return std::vector<float>(host_reward, host_reward + 6);
     }
 
     std::string device_name() const { return device_name_; }
@@ -149,11 +172,12 @@ private:
     CUcontext context_{};
     CUmodule module_{};
     CUfunction kernel_{};
+    CUfunction reward_kernel_{};
     char device_name_[256]{};
 };
 
 static std::string response_json(CudaDqnEngine& engine, const std::string& body) {
-    std::vector<float> features(7);
+    std::vector<float> features(10);
     features[0] = static_cast<float>(json_number(body, "line_side_shortage_qty", 0.0));
     features[1] = json_bool(body, "line_side_material_available_flag", true) ? 1.0f : 0.0f;
     features[2] = static_cast<float>(json_number(body, "delay_risk_score", 0.0));
@@ -161,6 +185,9 @@ static std::string response_json(CudaDqnEngine& engine, const std::string& body)
     features[4] = static_cast<float>(json_number(body, "current_oee", 0.0));
     features[5] = json_bool(body, "abnormal_power_flag", false) ? 1.0f : 0.0f;
     features[6] = static_cast<float>(machine_status_code(json_string(body, "machine_status", "NORMAL")));
+    features[7] = static_cast<float>(json_number(body, "customer_shortage_risk_score", json_number(body, "shortage_risk_score", 0.0)));
+    features[8] = static_cast<float>(json_number(body, "due_date_remaining_hours", 999.0));
+    features[9] = static_cast<float>(json_number(body, "avg_power_demand", json_number(body, "power_consumption_level", 0.0)));
 
     std::vector<float> q = engine.infer(features);
     int best = static_cast<int>(std::max_element(q.begin(), q.end()) - q.begin());
@@ -185,6 +212,33 @@ static std::string response_json(CudaDqnEngine& engine, const std::string& body)
         oss << q[i];
     }
     oss << "]}";
+    return oss.str();
+}
+
+static std::string response_reward_json(CudaDqnEngine& engine, const std::string& body) {
+    std::vector<float> features(8);
+    features[0] = static_cast<float>(json_number(body, "actual_oee", 0.75));
+    features[1] = static_cast<float>(json_number(body, "delay_hours", 0.0));
+    features[2] = json_bool(body, "shortage_occurred_flag", false) ? 1.0f : 0.0f;
+    features[3] = static_cast<float>(json_number(body, "actual_yield_rate", 0.95));
+    features[4] = static_cast<float>(json_number(body, "energy_kwh", 1.0));
+    features[5] = static_cast<float>(json_number(body, "planned_processing_time", 1.0));
+    features[6] = json_bool(body, "machine_down_occurred_flag", false) ? 1.0f : 0.0f;
+    features[7] = static_cast<float>(json_number(body, "expected_oee_improvement_rate", 0.0));
+
+    std::vector<float> r = engine.reward(features);
+    std::ostringstream oss;
+    oss << "{"
+        << "\"engine\":\"CUDA_DRIVER_API_PTX_REWARD_SERVICE\","
+        << "\"device\":\"" << engine.device_name() << "\","
+        << "\"reward_oee_score\":" << r[0] << ","
+        << "\"reward_delivery_score\":" << r[1] << ","
+        << "\"reward_shortage_score\":" << r[2] << ","
+        << "\"reward_quality_score\":" << r[3] << ","
+        << "\"reward_energy_score\":" << r[4] << ","
+        << "\"total_reward_score\":" << r[5] << ","
+        << "\"reason\":\"Reward components calculated by CUDA reward_score_kernel\""
+        << "}";
     return oss.str();
 }
 
@@ -273,9 +327,11 @@ int main(int argc, char** argv) {
                 if (first_line.find("OPTIONS ") == 0) {
                     send_http(client, 200, "application/json", "{}");
                 } else if (first_line.find("GET /health") == 0) {
-                    send_http(client, 200, "application/json", "{\"status\":\"UP\",\"engine\":\"CUDA_DRIVER_API_PTX_SERVICE\"}");
+                    send_http(client, 200, "application/json", "{\"status\":\"UP\",\"engine\":\"CUDA_DRIVER_API_PTX_SERVICE\",\"dqn_endpoint\":\"/infer\",\"reward_endpoint\":\"/reward\"}");
                 } else if (first_line.find("POST /infer") == 0) {
                     send_http(client, 200, "application/json", response_json(engine, body));
+                } else if (first_line.find("POST /reward") == 0) {
+                    send_http(client, 200, "application/json", response_reward_json(engine, body));
                 } else {
                     send_http(client, 404, "application/json", "{\"error\":\"not found\"}");
                 }

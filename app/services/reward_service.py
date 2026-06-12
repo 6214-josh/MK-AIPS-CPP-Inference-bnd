@@ -1,12 +1,16 @@
 import random
 from app.core.database import fetch_all, execute, execute_returning_id
 from app.core.schema_guard import ensure_extra_schema
+from app.services.gpu_inference_client import (
+    GpuInferenceUnavailable,
+    call_gpu_reward_service,
+)
+
 
 def _ensure_reward_schema():
     """
-    FIX45/FIX47：
     Reward 計算前自動建立 / 補齊 aips_reward_result 欄位。
-    FIX47 另補：Reward 回饋只列出有 CNC 的資料，空 CNC 的資料不列出。
+    FIX117：新增 reward_engine / reward_reason，標示 Reward 是否由 CUDA service 計算。
     """
     ensure_extra_schema()
     execute("""
@@ -38,10 +42,13 @@ def _ensure_reward_schema():
         ("reward_quality_score", "NUMERIC(12,4)"),
         ("reward_energy_score", "NUMERIC(12,4)"),
         ("total_reward_score", "NUMERIC(12,4)"),
+        ("reward_engine", "VARCHAR(120)"),
+        ("reward_reason", "TEXT"),
         ("created_at", "TIMESTAMP DEFAULT NOW()"),
     ]
     for name, ddl in columns:
         execute(f"ALTER TABLE aips_reward_result ADD COLUMN IF NOT EXISTS {name} {ddl}")
+
 
 def _num(value, default=0.0):
     try:
@@ -51,9 +58,9 @@ def _num(value, default=0.0):
     except Exception:
         return float(default)
 
+
 def _resolve_cnc(action, state):
     """
-    FIX47：
     有些 DQN Action 是補料、提高優先權、等待前工序等，
     不一定有 suggested_cnc_machine_id / original_cnc_machine_id。
     這種資料拿來算 CNC Reward 意義不大，因此不列入 Reward 回饋清單。
@@ -67,13 +74,72 @@ def _resolve_cnc(action, state):
     cnc = str(cnc).strip() if cnc is not None else ""
     return cnc
 
+
+def _python_reward_components(payload):
+    """
+    Python fallback：與 CUDA reward kernel 使用同一套 0~100 demo reward 公式。
+    """
+    actual_oee = _num(payload.get("actual_oee"), 0.70)
+    delay_hours = _num(payload.get("delay_hours"), 0)
+    shortage_occurred = bool(payload.get("shortage_occurred_flag"))
+    yield_rate = _num(payload.get("actual_yield_rate"), 0.95)
+    energy_kwh = _num(payload.get("energy_kwh"), 1)
+    planned = max(0.5, _num(payload.get("planned_processing_time"), 1))
+
+    reward_oee = actual_oee * 35
+    reward_delivery = max(0, 20 - delay_hours * 2)
+    reward_shortage = 8 if shortage_occurred else 18
+    reward_quality = yield_rate * 20
+    energy_ratio = max(0.0, min(1.0, 1 - max(0, energy_kwh - planned * 6) / max(planned * 8, 1)))
+    reward_energy = energy_ratio * 7
+    total = min(98, max(55, reward_oee + reward_delivery + reward_shortage + reward_quality + reward_energy))
+
+    return {
+        "engine": "PYTHON_REWARD_FALLBACK",
+        "reward_oee_score": reward_oee,
+        "reward_delivery_score": reward_delivery,
+        "reward_shortage_score": reward_shortage,
+        "reward_quality_score": reward_quality,
+        "reward_energy_score": reward_energy,
+        "total_reward_score": total,
+        "reason": "CUDA Reward service 未啟用或不可用，使用 Python fallback Reward 公式。",
+    }
+
+
+def _calculate_reward_with_cuda(payload):
+    """
+    FIX117：
+    優先呼叫 C++ CUDA service /reward。
+    失敗則自動降級 Python fallback，不影響 demo。
+    """
+    try:
+        gpu_result = call_gpu_reward_service(payload)
+        if gpu_result:
+            return {
+                "engine": gpu_result.get("engine") or "CUDA_REWARD_SERVICE",
+                "reward_oee_score": _num(gpu_result.get("reward_oee_score"), 0),
+                "reward_delivery_score": _num(gpu_result.get("reward_delivery_score"), 0),
+                "reward_shortage_score": _num(gpu_result.get("reward_shortage_score"), 0),
+                "reward_quality_score": _num(gpu_result.get("reward_quality_score"), 0),
+                "reward_energy_score": _num(gpu_result.get("reward_energy_score"), 0),
+                "total_reward_score": _num(gpu_result.get("total_reward_score"), 0),
+                "reason": gpu_result.get("reason") or "Reward 由 CUDA Driver API /reward endpoint 計算。",
+            }
+    except GpuInferenceUnavailable as exc:
+        fallback = _python_reward_components(payload)
+        fallback["reason"] = f"CUDA Reward service 連線失敗，已降級 Python Reward。原因：{exc}"
+        return fallback
+
+    return _python_reward_components(payload)
+
+
 def calculate_rewards(limit: int = 20):
     """
     每次按「計算 Reward」：
     1. 自動補 Reward schema
     2. 取最近 limit 筆 DQN action
     3. 只針對有 CNC 的 Action 新增 Reward
-    4. 空 CNC 的 Action 直接略過，避免畫面出現 CNC 空白列
+    4. FIX117：Reward components / total_reward_score 優先交給 CUDA service /reward 計算
     """
     _ensure_reward_schema()
 
@@ -121,21 +187,35 @@ def calculate_rewards(limit: int = 20):
         actual_oee = min(0.98, max(0.30, current_oee + expected_improve - delay_hours * 0.01))
         energy_kwh = actual * random.uniform(4, 9)
 
-        # FIX48：Demo 場景將 Reward 分數調高並轉成 0~100 分概念，較容易說服委員
-        # 仍然由 OEE、交期、缺料、品質、能源組成，不是亂數硬塞。
-        oee_score = actual_oee * 35
-        delivery_score = max(0, 20 - delay_hours * 2)
-        shortage_score = 8 if shortage_occurred else 18
-        quality_score = yield_rate * 20
-        energy_ratio = max(0.0, min(1.0, 1 - max(0, energy_kwh - planned * 6) / max(planned * 8, 1)))
-        energy_score = energy_ratio * 7
+        reward_payload = {
+            "action_id": action.get("action_id"),
+            "state_id": action.get("state_id"),
+            "work_order_no": action.get("work_order_no"),
+            "cnc_machine_id": cnc_machine_id,
+            "planned_processing_time": planned,
+            "actual_processing_time": actual,
+            "delay_hours": delay_hours,
+            "shortage_occurred_flag": shortage_occurred,
+            "machine_down_occurred_flag": machine_down,
+            "ng_qty": ng_qty,
+            "good_qty": good_qty,
+            "actual_yield_rate": yield_rate,
+            "actual_oee": actual_oee,
+            "energy_kwh": energy_kwh,
+            "expected_oee_improvement_rate": expected_improve,
+            "expected_delay_reduction_hours": _num(action.get("expected_delay_reduction_hours"), 0),
+            "expected_shortage_risk_reduction": _num(action.get("expected_shortage_risk_reduction"), 0),
+        }
 
-        reward_oee = oee_score
-        reward_delivery = delivery_score
-        reward_shortage = shortage_score
-        reward_quality = quality_score
-        reward_energy = energy_score
-        total = min(98, max(55, reward_oee + reward_delivery + reward_shortage + reward_quality + reward_energy))
+        scores = _calculate_reward_with_cuda(reward_payload)
+        reward_oee = scores["reward_oee_score"]
+        reward_delivery = scores["reward_delivery_score"]
+        reward_shortage = scores["reward_shortage_score"]
+        reward_quality = scores["reward_quality_score"]
+        reward_energy = scores["reward_energy_score"]
+        total = min(98, max(55, _num(scores["total_reward_score"], 0)))
+        reward_engine = scores.get("engine") or "PYTHON_REWARD_FALLBACK"
+        reward_reason = scores.get("reason") or ""
 
         reward_id = execute_returning_id(
             """
@@ -146,7 +226,8 @@ def calculate_rewards(limit: int = 20):
                 delay_hours, shortage_occurred_flag, machine_down_occurred_flag,
                 ng_qty, good_qty, actual_yield_rate, actual_oee, energy_kwh,
                 reward_oee_score, reward_delivery_score, reward_shortage_score,
-                reward_quality_score, reward_energy_score, total_reward_score
+                reward_quality_score, reward_energy_score, total_reward_score,
+                reward_engine, reward_reason
             )
             VALUES (
                 %s, %s, NOW(), %s, %s,
@@ -155,7 +236,8 @@ def calculate_rewards(limit: int = 20):
                 %s, %s, %s,
                 %s, %s, %s, %s, %s,
                 %s, %s, %s,
-                %s, %s, %s
+                %s, %s, %s,
+                %s, %s
             )
             RETURNING reward_id
             """,
@@ -168,6 +250,7 @@ def calculate_rewards(limit: int = 20):
                 ng_qty, good_qty, yield_rate, actual_oee, energy_kwh,
                 reward_oee, reward_delivery, reward_shortage,
                 reward_quality, reward_energy, total,
+                reward_engine, reward_reason,
             ),
             "reward_id",
         )
@@ -180,7 +263,7 @@ def calculate_rewards(limit: int = 20):
             "actual_oee": round(actual_oee, 3),
             "actual_yield_rate": round(yield_rate, 3),
             "energy_kwh": round(energy_kwh, 3),
+            "reward_engine": reward_engine,
         })
 
-    # 加一個非破壞性屬性，API 可拿來提示略過幾筆
     return rewards
